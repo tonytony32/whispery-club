@@ -20,26 +20,42 @@ That network is **Waku**.
 
 Imagine a postal system with no central post office. The postmen are thousands of nodes distributed across the internet, and messages don't go to an exact address but to a **neighbourhood** (content topic).
 
-You subscribe to your public key's neighbourhood. When someone wants to send you a message, they drop it in your neighbourhood. You receive everything that arrives there — including messages for other neighbours — and decide what to open.
+You subscribe to your channel's topic. When someone sends a group message, they publish to that same topic. All members receive everything that arrives there and decide what to open.
 
 ```
-Alice                    Waku Network                    Bob
-  │                                                       │
-  │── publishes to Bob's neighbourhood ──→ /whispery/1/0xab/proto
-  │                                               │       │
-  │                                               └──────→│
-  │                                                       │ receives, filters, decrypts
+Alice                    Waku Network                  Bob + Charlie
+  │                                                           │
+  │── publishes to channel topic ──→ /whispery/1/channel-0x{id[0:8]}/proto
+  │                                               │           │
+  │                                               └──────────→│
+  │                                                           │ receive, filter, decrypt
 ```
 
-### Content topics and neighbourhoods
+---
 
-The neighbourhood is derived from the **first 2 bytes** of the recipient's X25519 public key:
+## Two routing modes
+
+Whispery supports two message routing modes. The active mode is **group**.
+
+### Group mode (active)
+
+All members share a `content_key` obtained from the EEE. Messages are published to a **channel topic** derived from `channel_id`. All members of the channel subscribe to the same topic.
 
 ```
-/whispery/1/neighbor-0x{pubKey[0:2]}/proto
+topic = /whispery/1/channel-0x{channel_id[0:8]}/proto
 ```
 
-With 2 bytes there are 65,536 possible neighbourhoods. Two nodes end up in the same neighbourhood when their keys share the same prefix — probability ~1/65,536. Enough to keep traffic per neighbourhood manageable without revealing the recipient's exact identity.
+With `channel_id` being the first 8 hex chars of `sha256("whispery/nft/{tokenId}")`. The content_key encrypts every message — no outer ECIES layer is needed because the key is already shared among all members via the ACT.
+
+### P2P mode (available, not the default UI)
+
+Each node subscribes to a **neighbourhood topic** derived from its own X25519 public key:
+
+```
+topic = /whispery/1/neighbor-0x{pubKey[0:2]}/proto
+```
+
+With 2 bytes there are 65,536 possible neighbourhoods. P2P messages use ECIES over X25519 — an ephemeral keypair encrypts the entire L0 Envelope for the specific recipient.
 
 ---
 
@@ -62,33 +78,51 @@ The design is intentionally minimal. More fields in the clear means more fingerp
 
 ## mac_hint: the name on the outside of the envelope
 
-When you receive post in an apartment building, before going up to floor 7 you check whether the name on the envelope matches. If it doesn't, you return it unopened.
+### P2P hint
 
-The `mac_hint` does the same:
+Derived from the **recipient's X25519 public key**:
 
 ```
-mac_hint = HMAC-SHA256(pubKey, "SWARM_L1_HINT")[0:8]
+mac_hint = HMAC-SHA256(recipientPubKey, "SWARM_L1_HINT")[0:8]
 ```
 
-It's an 8-byte value derived from your public key. When a message arrives in your neighbourhood:
+Only the intended recipient matches this hint. In a neighbourhood with ~65,536 possible peers, it filters ~99.99% of messages before spending CPU on ECIES decryption.
 
-1. Compare the message's `mac_hint` with yours
-2. If they don't match → discard (log "Ignored by hint") — without opening the envelope
-3. If they match → attempt decryption
+### Group hint
 
-In a neighbourhood with 65,536 possible neighbours, the hint filters ~99.99% of messages before spending CPU on cryptography. The hint is **not secret** and does not authenticate — it is purely a performance optimisation.
+Derived from the **channel_id bytes**:
+
+```
+mac_hint = HMAC-SHA256(channelIdBytes, "SWARM_L1_CHANNEL_HINT")[0:8]
+```
+
+All members of the channel compute the same hint. It filters out messages from unrelated channels that happen to share the same topic prefix (possible when two `channel_id` values collide on the first 8 hex chars).
+
+In both cases the hint is **not secret** and does not authenticate — it is purely a performance optimisation.
 
 ---
 
 ## data: the L0 Envelope inside
 
-The `data` field contains an ECIES-encrypted **Level 0 Envelope** — the same structure defined in `src/core/crypto.ts`. This is the key architectural decision: L1 is the transport wrapper, L0 is the cryptographic payload.
+The `data` field carries a **Level 0 Envelope** — the cryptographic payload defined in `src/core/crypto.ts`. L1 is the transport wrapper; L0 is the cryptographic payload.
+
+### Group
+
+```
+data = JSON(L0_Envelope)   // no outer encryption — content_key already shared
+```
+
+The L0 Envelope's `ciphertext` is encrypted with `content_key` (shared among all ACT members via the EEE). The L0 fields themselves (`sender_pk`, `channel_id`, `timestamp`) are visible on the wire. This is the standard tradeoff in group messaging: metadata is exposed to Waku nodes, but message content is not.
+
+### P2P
 
 ```
 data = eciesEncrypt(recipientPubKey, JSON(L0_Envelope))
 ```
 
-The L0 Envelope (inside the encryption) contains:
+The entire L0 Envelope — including sender identity, channel, and timing — is ECIES-encrypted. Nothing is visible on the wire except the 8-byte `mac_hint`.
+
+The L0 Envelope (inside):
 
 ```typescript
 {
@@ -103,13 +137,11 @@ The L0 Envelope (inside the encryption) contains:
 }
 ```
 
-Everything that could identify the sender, the channel, or the timing is inside the encryption — invisible to the network.
-
 ---
 
-## ECIES: the lock on the envelope
+## ECIES: the lock on the P2P envelope
 
-The `data` field is encrypted with **ECIES over X25519** — the same primitive used by the rest of the Whispery stack (nacl.box).
+For P2P messages, the `data` field is encrypted with **ECIES over X25519** (nacl.box).
 
 How it works:
 
@@ -120,7 +152,9 @@ How it works:
 
 The recipient reverses the process: `secret = DH(my_private_key, ephemeral_pub)` → decrypts.
 
-Analogy: a combination lock the sender builds on the spot, calibrated specifically for the recipient's lock, then throws away the key. Only the recipient can open it. The sender is anonymous at the wire level — no sender identity appears outside the encryption.
+Analogy: a combination lock the sender builds on the spot, calibrated specifically for the recipient's lock, then throws away the key. Only the recipient can open it. The sender is anonymous at the wire level.
+
+Group messages do not use ECIES — the shared `content_key` (obtained from the EEE via the ACT) already provides symmetric encryption for all members.
 
 ---
 
@@ -144,7 +178,26 @@ MetaMask signs SIWE (once)
 
 Both keys are deterministic — same wallet always produces the same keys. One MetaMask popup at connection time, then all subsequent messages are signed and encrypted automatically without any additional prompts.
 
-The signing key is **not** Alice's Ethereum private key — it is a derived key, bound to her wallet deterministically. It signs each L0 Envelope, providing non-repudiation within the Whispery protocol. In the future, a key registry mapping `ethAddress → signingPubKey` will allow recipients to verify sender identity against the NFT membership list.
+The signing key is **not** Alice's Ethereum private key — it is a derived key, bound to her wallet deterministically. It signs each L0 Envelope, providing non-repudiation within the Whispery protocol.
+
+---
+
+## Group channel bootstrap
+
+Before a user can send or receive group messages, they need the `content_key`. The flow is:
+
+```
+1. Read EEE pointer from WhisperyBackpack contract (on-chain)
+2. Fetch EEE JSON from IPFS gateway (ipfs.ts: fetchJSON)
+3. accessGroupChannel(wallet, eee) → content_key
+   - Computes DH(sk_member, pk_group)
+   - Derives lookup_key → finds ACT entry
+   - Decrypts encrypted_content_key with access_kdk
+   - Returns content_key, or null if wallet not in ACT
+4. Subscribe to /whispery/1/channel-0x{channel_id[0:8]}/proto
+```
+
+If the wallet is not in the ACT (not a member), `accessGroupChannel` returns `null` and the connection is rejected before joining Waku.
 
 ---
 
@@ -157,28 +210,31 @@ User clicks "Connect to Waku"
   ├─ sha256(sig) → seed
   ├─ seed → x25519 keypair + secp256k1 signingKey
   │
+  ├─ Read eeePointer from WhisperyBackpack (wagmi useReadContract)
+  ├─ fetchJSON(eeePointer) → EEE
+  ├─ accessGroupChannel(wallet, eee) → content_key  (null → rejected)
+  │
   ├─ createLightNode({ defaultBootstrap: true })
   ├─ node.waitForPeers([LightPush, Filter])
   │
   ├─ new L1Messenger(node, wallet)
-  └─ messenger.subscribe() → listening on /whispery/1/neighbor-0x{myPrefix}/proto
+  └─ messenger.subscribeGroup(eee.channel_id, content_key)
+       → listening on /whispery/1/channel-0x{channel_id[0:8]}/proto
 
-User sends "hello" to Bob
+User sends "hello" to the group
   │
-  ├─ L0 = createP2PEnvelope(wallet, bobX25519PubKey, "hello")
-  │         → { ciphertext, sender_pk, timestamp, signature }
-  ├─ data    = eciesEncrypt(bobPubKey, JSON(L0))
-  ├─ hint    = HMAC-SHA256(bobPubKey, "SWARM_L1_HINT")[0:8]
-  ├─ payload = encode({ mac_hint: hint, data })
+  ├─ L0 = createGroupEnvelope(wallet, content_key, channel_id, "hello", epoch)
+  │         → { ciphertext: secretbox(msg, nonce, content_key), sender_pk, timestamp, signature }
+  ├─ hint    = HMAC-SHA256(channelIdBytes, "SWARM_L1_CHANNEL_HINT")[0:8]
+  ├─ payload = encode({ mac_hint: hint, data: JSON(L0) })
   └─ node.lightPush.send → Waku
 
-Bob receives a message in his neighbourhood
+Member receives a message on the channel topic
   │
   ├─ decode(payload) → { mac_hint, data }
-  ├─ mac_hint == myHint? → No  → "Ignored by hint"
-  │                      → Yes → eciesDecrypt(mySecretKey, data)
-  ├─ JSON.parse → L0 Envelope
-  ├─ openP2PEnvelope(myWallet, senderPk, l0) → "hello"
+  ├─ mac_hint == channelHint? → No  → "Group: Ignored by channel hint"
+  │                           → Yes → JSON.parse(data) → L0 Envelope
+  ├─ openGroupEnvelope(content_key, l0) → "hello"
   └─ emit 'message' event → { text, senderPk, timestamp } → UI
 ```
 
@@ -192,23 +248,30 @@ src/transport/
     envelope.proto      canonical protobuf schema
     envelope.ts         hand-rolled codec (no build step)
   crypto/
-    hints.ts            mac_hint: HMAC-SHA256(pubKey, domain)[0:8]
-    ecies.ts            encrypt/decrypt: X25519 + XSalsa20-Poly1305
-  messenger.ts          L1Messenger: publish (L0 inside) + subscribe + hint filter
+    hints.ts            macHint (P2P) + channelHint (group)
+    ecies.ts            P2P encrypt/decrypt: X25519 + XSalsa20-Poly1305
+  messenger.ts          L1Messenger:
+                          P2P:   publish / subscribe
+                          Group: publishGroup / subscribeGroup
+                          Topic helpers: neighborhoodTopic / channelTopic
   node.ts               createWakuNode: lifecycle, defaultBootstrap, onStatus
-  useMessenger.ts       React hook: SIWE → two keys → Waku → L1Messenger
+  useMessenger.ts       React hook: SIWE → two keys → fetch EEE → content_key → Waku
   __tests__/
     hints.test.ts
     ecies.test.ts
     envelope.test.ts
-    messenger.test.ts   includes sender_pk verification from L0 envelope
+    messenger.test.ts   P2P + group tests (22 total)
+
+src/core/
+  ipfs.ts               uploadJSON (write) + fetchJSON (read) via IPFS gateway
+  crypto.ts             L0 crypto: createGroupEnvelope / openGroupEnvelope / accessGroupChannel
 ```
 
 ---
 
 ## What is not implemented yet
 
-- **Key registry**: for Alice to know Bob's X25519 public key, Bob needs to publish it somewhere (on-chain, IPFS, or manual exchange). Currently the demo uses hardcoded Anvil keys as a substitute. A natural fit: add `registerKey(bytes32 x25519PubKey)` to the NFT or Backpack contract.
+- **Key registry**: for Alice to know Bob's X25519 public key, Bob needs to publish it somewhere (on-chain, IPFS, or manual exchange). A natural fit: add `registerKey(bytes32 x25519PubKey, bytes secp256k1SigningPubKey)` to the NFT or Backpack contract.
+  - *Depends on key registry* — **Sender verification**: `openGroupEnvelope` currently does not verify the `signature` field. Once the registry maps `sender_pk → secp256k1SigningPubKey`, the recipient can check that the signature on the L0 Envelope was made by the registered signing key for that sender — preventing a malicious member from impersonating another.
 - **Store protocol**: messages sent while a peer is offline are lost. Waku has a Store protocol for retrieving message history.
 - **Key rotation**: if a user reinstalls MetaMask with the same seed phrase, they recover the same Ethereum keys → same SIWE signature → same Whispery keypair. Key rotation would require a versioned SIWE nonce or an explicit rotation mechanism.
-- **Group envelope integration**: currently using P2P envelopes. Full group messaging requires fetching the EEE from IPFS to obtain the `content_key`, then using `createGroupEnvelope`.

@@ -175,7 +175,13 @@ be decrypted by a member who only has keys for `epoch: 1`.
 
 The X25519 public key of the sender. In a P2P channel the recipient needs
 it to recompute the DH shared secret. In a group channel it identifies who
-sent the message, without revealing the content.
+sent the message without revealing the content.
+
+In both cases, `sender_pk` travels inside the L1 `data` field. For P2P,
+the entire L0 Envelope (including `sender_pk`) is ECIES-encrypted, so it
+is invisible on the wire. For group, `sender_pk` is visible to Waku nodes —
+this is the standard group messaging tradeoff: member identity is exposed
+at the transport layer, but message content is not.
 
 #### ③ Encrypted payload — `ciphertext`, `mac_hint`
 

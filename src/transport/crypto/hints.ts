@@ -13,7 +13,8 @@
 import { hmac } from '@noble/hashes/hmac'
 import { sha256 } from '@noble/hashes/sha256'
 
-const DOMAIN = /* @__PURE__ */ new TextEncoder().encode('SWARM_L1_HINT')
+const DOMAIN         = /* @__PURE__ */ new TextEncoder().encode('SWARM_L1_HINT')
+const CHANNEL_DOMAIN = /* @__PURE__ */ new TextEncoder().encode('SWARM_L1_CHANNEL_HINT')
 
 /**
  * Derive the 8-byte hint for a given X25519 public key.
@@ -21,4 +22,13 @@ const DOMAIN = /* @__PURE__ */ new TextEncoder().encode('SWARM_L1_HINT')
  */
 export function macHint(pubKey: Uint8Array): Uint8Array {
   return hmac(sha256, pubKey, DOMAIN).slice(0, 8)
+}
+
+/**
+ * Derive the 8-byte hint for a group channel.
+ * All members of the channel compute the same hint from the channel_id bytes,
+ * providing a fast pre-filter before attempting content_key decryption.
+ */
+export function channelHint(channelIdBytes: Uint8Array): Uint8Array {
+  return hmac(sha256, channelIdBytes, CHANNEL_DOMAIN).slice(0, 8)
 }

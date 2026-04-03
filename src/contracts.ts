@@ -1,6 +1,12 @@
+import { keccak256, toBytes } from 'viem'
+
 // Deployed on Sepolia — see docs/contracts_deployed.md
 export const NFT_ADDRESS  = '0x59804B5A7b61E469F148Dbd86eE95EEC3F6dc06a' as const
 export const BACK_ADDRESS = '0x227A6991c3702C227A1ea4beB867DF522183f5CC' as const
+
+// On-chain key used to store/retrieve the EEE pointer in WhisperyBackpack.
+// keccak256("whispery/nft/1") — matches the tokenId 1 minted in Deploy.s.sol.
+export const CHANNEL_ID = keccak256(toBytes('whispery/nft/1'))
 
 export const NFT_ABI = [
   {

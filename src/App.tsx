@@ -2,10 +2,9 @@ import { useState } from 'react'
 import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain } from 'wagmi'
 import { sepolia } from 'wagmi/chains'
 import { injected } from 'wagmi/connectors'
-import { keccak256, toBytes } from 'viem'
 import CryptoDemo from './CryptoDemo'
 import MessengerView from './MessengerView'
-import { NFT_ADDRESS, BACK_ADDRESS, NFT_ABI, BACK_ABI, TOKEN_NAMES } from './contracts'
+import { NFT_ADDRESS, BACK_ADDRESS, NFT_ABI, BACK_ABI, TOKEN_NAMES, CHANNEL_ID } from './contracts'
 import { uploadJSON } from './core/ipfs'
 import { createWallet, createGroupChannel, DEMO_PRIVATE_KEYS } from './core/crypto'
 
@@ -29,10 +28,6 @@ const mono: React.CSSProperties = {
   fontFamily: '"IBM Plex Mono", "Fira Code", monospace',
   fontSize: 12,
 }
-
-// channelId used when deploying: sha256("whispery/nft/1")
-// viem's keccak256 is used here for convenience; the contract accepts any bytes32
-const CHANNEL_ID = keccak256(toBytes('whispery/nft/1'))
 
 // ── Live view ─────────────────────────────────────────────────────────────────
 

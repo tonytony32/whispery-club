@@ -1,8 +1,7 @@
-import { useState } from 'react'
-import { useAccount } from 'wagmi'
+import { useAccount, useReadContract } from 'wagmi'
 import { bytesToHex } from '@noble/hashes/utils'
-import { createWallet, DEMO_PRIVATE_KEYS } from './core/crypto'
 import { useMessenger } from './transport/useMessenger'
+import { BACK_ADDRESS, BACK_ABI, CHANNEL_ID } from './contracts'
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const C = {
@@ -31,14 +30,7 @@ const card: React.CSSProperties = {
   padding: '20px 24px',
 }
 
-// ── Demo targets (other members' X25519 pubkeys, derived from DEMO keys) ──────
-// Used as send targets in demo mode. In production, pubkeys would be
-// fetched from a key registry (on-chain or IPFS).
-const DEMO_MEMBERS = [
-  createWallet(DEMO_PRIVATE_KEYS.A, 'Alice'),
-  createWallet(DEMO_PRIVATE_KEYS.B, 'Bob'),
-  createWallet(DEMO_PRIVATE_KEYS.C, 'Charlie'),
-]
+import { useState } from 'react'
 
 function StatusBadge({ status }: { status: string }) {
   const color =
@@ -56,22 +48,30 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function MessengerView() {
   const { address } = useAccount()
-  const { status, signing, myPubKey, messages, connect, send, signError } = useMessenger(address)
 
-  const [recipientIdx, setRecipientIdx] = useState(0)
-  const [draft, setDraft] = useState('')
-  const [sending, setSending] = useState(false)
+  // Read EEE pointer from Backpack contract
+  const { data: eeeData } = useReadContract({
+    address: BACK_ADDRESS,
+    abi: BACK_ABI,
+    functionName: 'getEEE',
+    args: [CHANNEL_ID as `0x${string}`],
+    query: { enabled: true },
+  })
+  const [eeePointer, eeeEpoch] = eeeData ?? ['', 0n]
+  const pointer = eeePointer || undefined
+
+  const { status, signing, myPubKey, messages, connect, send, signError } = useMessenger(address, pointer)
+
+  const [draft, setDraft]       = useState('')
+  const [sending, setSending]   = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
-
-  // In demo mode, send to any of the known demo members
-  const targets = DEMO_MEMBERS
 
   async function handleSend() {
     if (!draft.trim()) return
     setSending(true)
     setSendError(null)
     try {
-      await send(targets[recipientIdx].x25519.publicKey, draft.trim())
+      await send(draft.trim())
       setDraft('')
     } catch (e) {
       setSendError(e instanceof Error ? e.message : String(e))
@@ -90,7 +90,7 @@ export default function MessengerView() {
           justifyContent: 'space-between', marginBottom: 14 }}>
           <p style={{ ...mono, fontSize: 10, fontWeight: 700, letterSpacing: 1.5,
             textTransform: 'uppercase', color: C.muted, margin: 0 }}>
-            Waku · L1 Transport
+            Waku · L1 Transport · Group
           </p>
           <StatusBadge status={signing ? 'connecting' : status} />
         </div>
@@ -99,19 +99,18 @@ export default function MessengerView() {
           <span style={{ ...mono, color: C.muted }}>
             Connect your wallet in the Live tab first.
           </span>
+        ) : !pointer ? (
+          <span style={{ ...mono, color: C.yellow }}>
+            EEE not yet published — go to the Live tab and publish the channel state first.
+          </span>
         ) : status === 'connected' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <span style={{ ...mono, color: C.green }}>
-              Ready · {address.slice(0, 10)}…
+              Ready · group channel · epoch {String(eeeEpoch)}
             </span>
             {myPubKey && (
               <span style={{ ...mono, color: C.muted, fontSize: 10, wordBreak: 'break-all' }}>
                 X25519 · 0x{bytesToHex(myPubKey)}
-              </span>
-            )}
-            {myPubKey && (
-              <span style={{ ...mono, color: C.muted, fontSize: 10 }}>
-                topic · /whispery/1/neighbor-0x{bytesToHex(myPubKey.slice(0, 2))}/proto
               </span>
             )}
           </div>
@@ -124,7 +123,7 @@ export default function MessengerView() {
             )}
             {status === 'connecting' && !signing && (
               <span style={{ ...mono, color: C.yellow }}>
-                Joining The Waku Network… (may take up to 30 s)
+                Joining the Waku Network… (may take up to 30 s)
               </span>
             )}
             {status === 'error' && (
@@ -135,7 +134,7 @@ export default function MessengerView() {
             {signError && (
               <span style={{ ...mono, color: C.red, fontSize: 11 }}>{signError}</span>
             )}
-            {!signing && status !== 'connecting' && (
+            {!signing && status !== 'connecting' && pointer && (
               <button
                 onClick={connect}
                 style={{
@@ -157,26 +156,8 @@ export default function MessengerView() {
         <div style={card}>
           <p style={{ ...mono, fontSize: 10, fontWeight: 700, letterSpacing: 1.5,
             textTransform: 'uppercase', color: C.muted, margin: '0 0 14px' }}>
-            Send message
+            Send to group
           </p>
-
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-            {targets.map((m, i) => (
-              <button
-                key={m.ethAddress}
-                onClick={() => setRecipientIdx(i)}
-                style={{
-                  background: recipientIdx === i ? C.accent : 'transparent',
-                  color: recipientIdx === i ? '#fff' : C.muted,
-                  border: `1px solid ${recipientIdx === i ? C.accent : C.border}`,
-                  borderRadius: 6, padding: '4px 12px',
-                  ...mono, fontWeight: 700, cursor: 'pointer',
-                }}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
 
           <div style={{ display: 'flex', gap: 8 }}>
             <input
@@ -234,7 +215,7 @@ export default function MessengerView() {
                 }}>
                   <div style={{ fontSize: 10, marginBottom: 4,
                     color: msg.direction === 'out' ? 'rgba(255,255,255,0.6)' : C.muted }}>
-                    {msg.direction === 'out' ? 'you' : 'incoming'} · {new Date(msg.at).toLocaleTimeString()}
+                    {msg.direction === 'out' ? 'you' : 'group'} · {new Date(msg.at).toLocaleTimeString()}
                   </div>
                   {msg.text}
                 </div>

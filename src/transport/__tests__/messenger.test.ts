@@ -8,8 +8,8 @@
 
 import { describe, it, expect, vi } from 'vitest'
 import nacl from 'tweetnacl'
-import { L1Messenger, neighborhoodTopic } from '../messenger'
-import { createWallet, DEMO_PRIVATE_KEYS } from '../../core/crypto'
+import { L1Messenger, neighborhoodTopic, channelTopic } from '../messenger'
+import { createWallet, createGroupChannel, accessGroupChannel, DEMO_PRIVATE_KEYS } from '../../core/crypto'
 import type { LightNode } from '@waku/sdk'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -134,6 +134,100 @@ describe('L1Messenger', () => {
     const expectedTopic = neighborhoodTopic(walletBob.x25519.publicKey)
     expect(node.lightPush.send).toHaveBeenCalledWith(
       expect.objectContaining({ contentTopic: expectedTopic }),
+      expect.any(Object),
+    )
+  })
+})
+
+// ── Group tests ───────────────────────────────────────────────────────────────
+
+describe('L1Messenger group', () => {
+  it('channelTopic: different channelIds yield different topics', () => {
+    const topicA = channelTopic('aabbccdd' + '0'.repeat(56))
+    const topicB = channelTopic('11223344' + '0'.repeat(56))
+    expect(topicA).not.toEqual(topicB)
+  })
+
+  it('channelTopic: consistent with 0x-prefixed and bare hex', () => {
+    const id = 'aabbccdd' + '0'.repeat(56)
+    expect(channelTopic(id)).toEqual(channelTopic('0x' + id))
+  })
+
+  it('publishGroup → subscribeGroup: recipient decrypts with content_key', async () => {
+    const { node } = makeMockNode()
+
+    const { eee, content_key } = createGroupChannel(
+      walletAlice,
+      [walletAlice, walletBob, walletCharlie],
+      'TEST-001',
+      0,
+    )
+
+    const aliceMessenger = new L1Messenger(node, walletAlice)
+    const bobMessenger   = new L1Messenger(node, walletBob)
+
+    const ckBob = accessGroupChannel(walletBob, eee)!
+    await bobMessenger.subscribeGroup(eee.channel_id, ckBob)
+
+    const received: string[] = []
+    bobMessenger.addEventListener('message', (e) => {
+      received.push((e as CustomEvent<{ text: string }>).detail.text)
+    })
+
+    await aliceMessenger.publishGroup(content_key, eee.channel_id, eee.epoch, 'hello group')
+
+    expect(received).toEqual(['hello group'])
+  })
+
+  it('publishGroup → subscribeGroup: all three members receive the message', async () => {
+    const { node } = makeMockNode()
+
+    const { eee, content_key } = createGroupChannel(
+      walletAlice,
+      [walletAlice, walletBob, walletCharlie],
+      'TEST-002',
+      0,
+    )
+
+    const aliceM   = new L1Messenger(node, walletAlice)
+    const bobM     = new L1Messenger(node, walletBob)
+    const charlieM = new L1Messenger(node, walletCharlie)
+
+    const ckBob     = accessGroupChannel(walletBob, eee)!
+    const ckCharlie = accessGroupChannel(walletCharlie, eee)!
+
+    await bobM.subscribeGroup(eee.channel_id, ckBob)
+    await charlieM.subscribeGroup(eee.channel_id, ckCharlie)
+
+    const bobReceived:     string[] = []
+    const charlieReceived: string[] = []
+    bobM.addEventListener('message',     e => bobReceived.push((e as CustomEvent<{ text: string }>).detail.text))
+    charlieM.addEventListener('message', e => charlieReceived.push((e as CustomEvent<{ text: string }>).detail.text))
+
+    await aliceM.publishGroup(content_key, eee.channel_id, eee.epoch, 'broadcast')
+
+    expect(bobReceived).toEqual(['broadcast'])
+    expect(charlieReceived).toEqual(['broadcast'])
+  })
+
+  it('publishGroup sends to channel topic, not neighborhood topic', async () => {
+    const { node } = makeMockNode()
+
+    const { eee, content_key } = createGroupChannel(
+      walletAlice, [walletAlice, walletBob], 'TEST-003', 0,
+    )
+
+    const sender = new L1Messenger(node, walletAlice)
+    await sender.publishGroup(content_key, eee.channel_id, eee.epoch, 'hi')
+
+    const expectedTopic = channelTopic(eee.channel_id)
+    expect(node.lightPush.send).toHaveBeenCalledWith(
+      expect.objectContaining({ contentTopic: expectedTopic }),
+      expect.any(Object),
+    )
+    // Must NOT send to a neighborhood topic
+    expect(node.lightPush.send).not.toHaveBeenCalledWith(
+      expect.objectContaining({ contentTopic: expect.stringContaining('/neighbor-') }),
       expect.any(Object),
     )
   })

@@ -31,9 +31,14 @@ import { StaticShardingRoutingInfo } from '@waku/utils'
 import nacl from 'tweetnacl'
 import { bytesToHex } from '@noble/hashes/utils'
 import { encode as encodeEnvelope, decode as decodeEnvelope } from './proto/envelope'
-import { macHint as computeHint } from './crypto/hints'
+import { macHint as computeHint, channelHint as computeChannelHint } from './crypto/hints'
 import { eciesEncrypt, eciesDecrypt } from './crypto/ecies'
-import { createP2PEnvelope, openP2PEnvelope, type Wallet, type Envelope as L0Envelope } from '../core/crypto'
+import {
+  createP2PEnvelope, openP2PEnvelope,
+  createGroupEnvelope, openGroupEnvelope,
+  fromHex,
+  type Wallet, type Envelope as L0Envelope,
+} from '../core/crypto'
 
 // Waku Network: cluster 1, all 8 shards (matches defaultBootstrap: true).
 // We pin to shard 0 for all Whispery content — the mac_hint + content topic
@@ -52,6 +57,16 @@ const APP = '/whispery/1'
  */
 export function neighborhoodTopic(pubKey: Uint8Array): string {
   return `${APP}/neighbor-0x${bytesToHex(pubKey.slice(0, 2))}/proto`
+}
+
+/**
+ * Returns the Waku content topic for a group channel.
+ * Derived from the first 4 bytes (8 hex chars) of the channel_id.
+ * All members of the same channel subscribe to the same topic.
+ */
+export function channelTopic(channelId: string): string {
+  const clean = channelId.replace(/^0x/, '')
+  return `${APP}/channel-0x${clean.slice(0, 8)}/proto`
 }
 
 // ── L1Messenger ───────────────────────────────────────────────────────────────
@@ -101,6 +116,69 @@ export class L1Messenger extends EventTarget {
     if (result.failures?.length) {
       throw new Error(`Waku push failed: ${result.failures.map(f => f.error).join(', ')}`)
     }
+  }
+
+  /**
+   * Encrypt and publish a group message to all members sharing the same channel.
+   * Uses the shared content_key (from EEE) — no outer ECIES wrapping.
+   * The mac_hint is derived from channel_id bytes so all members can filter efficiently.
+   */
+  async publishGroup(
+    contentKey: Uint8Array,
+    channelId: string,
+    epoch: number,
+    message: string,
+  ): Promise<void> {
+    const topic    = channelTopic(channelId)
+    const encoder  = createEncoder({ contentTopic: topic, routingInfo: ROUTING_INFO })
+    const hint     = computeChannelHint(fromHex(channelId))
+    const l0       = createGroupEnvelope(this.wallet, contentKey, channelId, message, epoch)
+    const data     = new TextEncoder().encode(JSON.stringify(l0))
+    const payload  = encodeEnvelope({ macHint: hint, data })
+
+    const result = await this.node.lightPush.send(encoder, { payload })
+    if (result.failures?.length) {
+      throw new Error(`Waku push failed: ${result.failures.map(f => f.error).join(', ')}`)
+    }
+  }
+
+  /**
+   * Subscribe to a group channel topic.
+   * Emits 'message' CustomEvents for each message decryptable with content_key.
+   * The hint filter discards messages from other channels that share the same topic prefix.
+   */
+  async subscribeGroup(channelId: string, contentKey: Uint8Array): Promise<void> {
+    const topic    = channelTopic(channelId)
+    const decoder  = createDecoder(topic, ROUTING_INFO)
+    const myHint   = computeChannelHint(fromHex(channelId))
+
+    await this.node.filter.subscribe([decoder], (msg) => {
+      if (!msg.payload) return
+
+      let env
+      try {
+        env = decodeEnvelope(msg.payload)
+      } catch {
+        return
+      }
+
+      if (!constantTimeEqual(env.macHint, myHint)) {
+        console.debug('[L1] Group: Ignored by channel hint')
+        return
+      }
+
+      try {
+        const l0: L0Envelope = JSON.parse(new TextDecoder().decode(env.data))
+        const text = openGroupEnvelope(contentKey, l0)
+
+        const event = new CustomEvent('message', {
+          detail: { text, senderPk: l0.sender_pk, timestamp: l0.timestamp },
+        })
+        this.dispatchEvent(event)
+      } catch {
+        console.debug('[L1] Group: Decryption failed — wrong content_key or tampered payload')
+      }
+    })
   }
 
   /**

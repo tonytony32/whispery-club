@@ -1,4 +1,16 @@
-const PINATA_JWT = import.meta.env.VITE_PINATA_JWT as string
+const PINATA_JWT    = import.meta.env.VITE_PINATA_JWT as string
+const IPFS_GATEWAY  = 'https://ipfs.io/ipfs/'
+
+/**
+ * Fetch and JSON-parse an IPFS document via the public gateway.
+ * Accepts both ipfs://CID and raw CID strings.
+ */
+export async function fetchJSON<T = unknown>(ipfsUri: string): Promise<T> {
+  const cid = ipfsUri.replace(/^ipfs:\/\//, '')
+  const res = await fetch(`${IPFS_GATEWAY}${cid}`)
+  if (!res.ok) throw new Error(`IPFS fetch failed ${res.status}: ${ipfsUri}`)
+  return res.json() as Promise<T>
+}
 
 export async function uploadJSON(content: object, name: string): Promise<string> {
   if (!PINATA_JWT) throw new Error('VITE_PINATA_JWT not set in .env')
