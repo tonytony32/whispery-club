@@ -33,6 +33,7 @@ import { bytesToHex } from '@noble/hashes/utils'
 import { encode as encodeEnvelope, decode as decodeEnvelope } from './proto/envelope'
 import { macHint as computeHint } from './crypto/hints'
 import { eciesEncrypt, eciesDecrypt } from './crypto/ecies'
+import { createP2PEnvelope, openP2PEnvelope, type Wallet, type Envelope as L0Envelope } from '../core/crypto'
 
 // Waku Network: cluster 1, all 8 shards (matches defaultBootstrap: true).
 // We pin to shard 0 for all Whispery content — the mac_hint + content topic
@@ -72,10 +73,10 @@ export class L1Messenger extends EventTarget {
    */
   constructor(
     private readonly node: LightNode,
-    private readonly secretKey: Uint8Array,
+    private readonly wallet: Wallet,
   ) {
     super()
-    this.pubKey   = nacl.box.keyPair.fromSecretKey(secretKey).publicKey
+    this.pubKey   = wallet.x25519.publicKey
     this.myHint   = computeHint(this.pubKey)
     this.myTopic  = neighborhoodTopic(this.pubKey)
   }
@@ -88,7 +89,12 @@ export class L1Messenger extends EventTarget {
     const topic   = neighborhoodTopic(targetPubKey)
     const encoder = createEncoder({ contentTopic: topic, routingInfo: ROUTING_INFO })
     const hint    = computeHint(targetPubKey)
-    const data    = eciesEncrypt(targetPubKey, new TextEncoder().encode(message))
+
+    // Build a signed L0 Envelope — sender identity + timestamp + secp256k1 signature
+    const l0 = createP2PEnvelope(this.wallet, targetPubKey, message)
+
+    // ECIES-encrypt the serialized L0 Envelope for the recipient
+    const data    = eciesEncrypt(targetPubKey, new TextEncoder().encode(JSON.stringify(l0)))
     const payload = encodeEnvelope({ macHint: hint, data })
 
     const result = await this.node.lightPush.send(encoder, { payload })
@@ -127,11 +133,18 @@ export class L1Messenger extends EventTarget {
         return
       }
 
-      // Attempt decryption
+      // Attempt decryption + L0 deserialization
       try {
-        const plain = eciesDecrypt(this.secretKey, env.data)
-        const text  = new TextDecoder().decode(plain)
-        const event = new CustomEvent('message', { detail: { text } })
+        const plain = eciesDecrypt(this.wallet.x25519.secretKey, env.data)
+        const l0: L0Envelope = JSON.parse(new TextDecoder().decode(plain))
+
+        // Verify and open the L0 envelope — recovers plaintext using our X25519 key
+        const senderPk = Uint8Array.from(Buffer.from(l0.sender_pk, 'hex'))
+        const text = openP2PEnvelope(this.wallet, senderPk, l0)
+
+        const event = new CustomEvent('message', {
+          detail: { text, senderPk: l0.sender_pk, timestamp: l0.timestamp },
+        })
         this.dispatchEvent(event)
       } catch {
         console.debug('[L1] Decryption failed — hint collision or tampered payload')

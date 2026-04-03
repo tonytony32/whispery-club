@@ -175,15 +175,31 @@ export function createWallet(privKeyHex: string, label: string): Wallet {
 }
 
 /**
- * Deriva el keypair X25519 desde una firma SIWE obtenida vía MetaMask.
- * MetaMask aplica el mismo prefijo EIP-191 que siweSign, así que la firma
- * es idéntica y el keypair resultante es el mismo que createWallet produciría.
+ * Deriva un keypair X25519 y una clave de firma secp256k1 desde la firma SIWE
+ * obtenida vía MetaMask. Un solo popup → dos claves deterministas:
+ *
+ *   seed        = sha256(siwe_signature)
+ *   x25519      = nacl.box.keyPair(seed)               — cifrado de mensajes
+ *   signingKey  = hkdf(seed, "whispery/signing/v1")     — firma de envelopes L0
+ *
+ * La signingKey NO es la clave privada de Ethereum de Alice — es una clave
+ * derivada, vinculada a su wallet de forma determinista. Permite firmar
+ * cada mensaje Whispery sin popups adicionales en MetaMask.
  *
  * @param signatureHex  Firma hex (0x…, 65 bytes) devuelta por wagmi signMessage.
+ * @param ethAddress    Dirección Ethereum real del usuario (de wagmi useAccount).
  */
-export function x25519FromSig(signatureHex: string): nacl.BoxKeyPair {
-  const seed = sha256(fromHex(signatureHex.replace(/^0x/, '')))
-  return nacl.box.keyPair.fromSecretKey(seed)
+export function keysFromSig(signatureHex: string, ethAddress: string): Wallet {
+  const seed       = sha256(fromHex(signatureHex.replace(/^0x/, '')))
+  const x25519     = nacl.box.keyPair.fromSecretKey(seed)
+  const signingKey = derive(seed, 'whispery/signing/v1')
+
+  return {
+    label:      ethAddress.slice(0, 10) + '…',
+    ethPrivKey: signingKey,        // clave de firma derivada (no la clave ETH real)
+    ethAddress: getAddress(ethAddress),
+    x25519,
+  }
 }
 
 // ─── Escenario A: Canal P2P ──────────────────────────────────────────────────

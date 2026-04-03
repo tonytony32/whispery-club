@@ -15,7 +15,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSignMessage } from 'wagmi'
 import type { LightNode } from '@waku/sdk'
-import { siweMessage, x25519FromSig } from '../core/crypto'
+import { siweMessage, keysFromSig } from '../core/crypto'
+import type { Wallet } from '../core/crypto'
 import { createWakuNode, type NodeStatus } from './node'
 import { L1Messenger } from './messenger'
 import nacl from 'tweetnacl'
@@ -44,6 +45,7 @@ export function useMessenger(ethAddress: string | undefined): UseMessengerResult
   const [signing, setSigning]   = useState(false)
   const [signError, setSignError] = useState<string | null>(null)
   const [myPubKey, setMyPubKey] = useState<Uint8Array | null>(null)
+  const walletRef = useRef<Wallet | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
 
   const nodeRef      = useRef<LightNode | null>(null)
@@ -64,13 +66,14 @@ export function useMessenger(ethAddress: string | undefined): UseMessengerResult
     setSigning(true)
     setSignError(null)
 
-    let kp: nacl.BoxKeyPair
+    let wallet: Wallet
     try {
       // Ask MetaMask to sign the deterministic SIWE message
       const sig = await signMessageAsync({ message: siweMessage(ethAddress) })
-      kp = x25519FromSig(sig)
-      x25519Ref.current = kp
-      setMyPubKey(kp.publicKey)
+      wallet = keysFromSig(sig, ethAddress)
+      walletRef.current = wallet
+      x25519Ref.current = wallet.x25519
+      setMyPubKey(wallet.x25519.publicKey)
     } catch (e) {
       setSigning(false)
       setSignError(e instanceof Error ? e.message : 'Signature rejected')
@@ -89,7 +92,7 @@ export function useMessenger(ethAddress: string | undefined): UseMessengerResult
       })
 
       nodeRef.current = node
-      const messenger = new L1Messenger(node, kp.secretKey)
+      const messenger = new L1Messenger(node, wallet)
       messengerRef.current = messenger
 
       await messenger.subscribe()
