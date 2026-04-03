@@ -20,6 +20,9 @@ contract WhisperyNFT is Initializable, ERC721Upgradeable, OwnableUpgradeable, UU
     /// @dev Maps member address → their tokenId (1-indexed; 0 means no token).
     mapping(address => uint256) private _tokenOfOwner;
 
+    /// @dev Maps tokenId → IPFS URI set by the owner after minting.
+    mapping(uint256 => string) private _tokenURIs;
+
     // ─── Events ───────────────────────────────────────────────────────────────
 
     event MemberMinted(address indexed to, uint256 indexed tokenId);
@@ -68,6 +71,20 @@ contract WhisperyNFT is Initializable, ERC721Upgradeable, OwnableUpgradeable, UU
         delete _tokenOfOwner[from];
         _burn(tokenId);
         emit MemberBurned(from, tokenId);
+    }
+
+    // ─── Metadata ─────────────────────────────────────────────────────────────
+
+    /// @notice Set or update the metadata URI for a token. Only owner.
+    function setTokenURI(uint256 tokenId, string calldata uri) external onlyOwner {
+        _requireOwned(tokenId);
+        _tokenURIs[tokenId] = uri;
+    }
+
+    /// @notice Returns the IPFS metadata URI for a token.
+    function tokenURI(uint256 tokenId) public view override returns (string memory) {
+        _requireOwned(tokenId);
+        return _tokenURIs[tokenId];
     }
 
     // ─── View helpers ─────────────────────────────────────────────────────────

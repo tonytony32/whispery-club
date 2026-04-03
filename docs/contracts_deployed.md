@@ -13,10 +13,19 @@ Admin: Alice (`DEPLOYER_ADDRESS`)
 | Role | Address |
 |---|---|
 | **Proxy** (use this) | `0x59804B5A7b61E469F148Dbd86eE95EEC3F6dc06a` |
-| Implementation | `0x36d9CEf1cCde5A7A1BE4D0973B1fBd60420a1665` |
+| Implementation v2 | `0x28a7923CC9dE33DA91cBe118d89024b032388971` |
+| Implementation v1 | `0x36d9CEf1cCde5A7A1BE4D0973B1fBd60420a1665` |
 
 - Proxy on Etherscan: https://sepolia.etherscan.io/address/0x59804b5a7b61e469f148dbd86ee95eec3f6dc06a
-- Implementation on Etherscan: https://sepolia.etherscan.io/address/0x36d9cef1ccde5a7a1be4d0973b1fbd60420a1665
+- Implementation v2 on Etherscan: https://sepolia.etherscan.io/address/0x28a7923cc9de33da91cbe118d89024b032388971
+
+### Token metadata (IPFS)
+
+| tokenId | Member | Metadata CID |
+|---|---|---|
+| 1 | Alice | `QmatzFmb6aPJU98wyomksxw6RdYdRr9r7HK7cC1xTDMau3` |
+| 2 | Bob | `QmbBWZdQ2CXgytW5YZdx9VSSCdQLLr4pEFB3XAtraUn1io` |
+| 3 | Charlie | `QmaUjsfrdXDsFDADp3YDoemUNHSgFfNozq5ki5EA43nYJt` |
 
 ### Founding members
 
