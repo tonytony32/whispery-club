@@ -4,6 +4,7 @@ import { sepolia } from 'wagmi/chains'
 import { injected } from 'wagmi/connectors'
 import { keccak256, toBytes } from 'viem'
 import CryptoDemo from './CryptoDemo'
+import MessengerView from './MessengerView'
 import { NFT_ADDRESS, BACK_ADDRESS, NFT_ABI, BACK_ABI, TOKEN_NAMES } from './contracts'
 import { uploadJSON } from './core/ipfs'
 import { createWallet, createGroupChannel, DEMO_PRIVATE_KEYS } from './core/crypto'
@@ -296,7 +297,7 @@ function Row({ label, value, color }: { label: string; value: string; color: str
 
 // ── Tab toggle ────────────────────────────────────────────────────────────────
 
-type Tab = 'live' | 'demo'
+type Tab = 'live' | 'messenger' | 'demo'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('live')
@@ -331,16 +332,19 @@ export default function App() {
           WHISPERY
         </span>
         <span style={{ color: C.muted, fontSize: 11, flex: 1 }}>
-          Level 0 · NFT-gated group channel
+          Level 1 · NFT-gated encrypted messenger
         </span>
         <div style={{ display: 'flex', gap: 8 }}>
           <TabBtn id="live">⬡ Live · Sepolia</TabBtn>
+          <TabBtn id="messenger">⬡ Messenger</TabBtn>
           <TabBtn id="demo">⬡ Crypto Demo</TabBtn>
         </div>
       </div>
 
       {/* Body */}
-      {tab === 'live' ? <LiveView /> : <CryptoDemo />}
+      {tab === 'live'       ? <LiveView />      :
+       tab === 'messenger' ? <MessengerView /> :
+                             <CryptoDemo />}
     </div>
   )
 }

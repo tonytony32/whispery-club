@@ -27,11 +27,18 @@
 
 import { createEncoder, createDecoder } from '@waku/sdk'
 import type { LightNode } from '@waku/sdk'
+import { StaticShardingRoutingInfo } from '@waku/utils'
 import nacl from 'tweetnacl'
 import { bytesToHex } from '@noble/hashes/utils'
 import { encode as encodeEnvelope, decode as decodeEnvelope } from './proto/envelope'
 import { macHint as computeHint } from './crypto/hints'
 import { eciesEncrypt, eciesDecrypt } from './crypto/ecies'
+
+// Waku Network: cluster 1, all 8 shards (matches defaultBootstrap: true).
+// We pin to shard 0 for all Whispery content — the mac_hint + content topic
+// routing handles application-level delivery within the shard.
+const NETWORK_CONFIG = { clusterId: 1, shards: [0, 1, 2, 3, 4, 5, 6, 7] } as const
+const ROUTING_INFO   = StaticShardingRoutingInfo.fromShard(0, NETWORK_CONFIG)
 
 // ── Content topic helpers ─────────────────────────────────────────────────────
 
@@ -79,7 +86,7 @@ export class L1Messenger extends EventTarget {
    */
   async publish(targetPubKey: Uint8Array, message: string): Promise<void> {
     const topic   = neighborhoodTopic(targetPubKey)
-    const encoder = createEncoder({ contentTopic: topic })
+    const encoder = createEncoder({ contentTopic: topic, routingInfo: ROUTING_INFO })
     const hint    = computeHint(targetPubKey)
     const data    = eciesEncrypt(targetPubKey, new TextEncoder().encode(message))
     const payload = encodeEnvelope({ macHint: hint, data })
@@ -99,7 +106,7 @@ export class L1Messenger extends EventTarget {
    *   await messenger.subscribe()
    */
   async subscribe(): Promise<void> {
-    const decoder = createDecoder(this.myTopic)
+    const decoder = createDecoder(this.myTopic, ROUTING_INFO)
 
     await this.node.filter.subscribe([decoder], (msg) => {
       if (!msg.payload) return
