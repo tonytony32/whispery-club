@@ -4,7 +4,7 @@ import { bytesToHex } from '@noble/hashes/utils'
 import { createWallet, DEMO_PRIVATE_KEYS } from './core/crypto'
 import { useMessenger } from './transport/useMessenger'
 
-// ── Palette (shared with App.tsx) ─────────────────────────────────────────────
+// ── Palette ───────────────────────────────────────────────────────────────────
 const C = {
   bg:      '#0b0b0e',
   surface: '#13131a',
@@ -17,7 +17,6 @@ const C = {
   green:   '#3ddc97',
   red:     '#ff5a5a',
   yellow:  '#ffc83d',
-  blue:    '#5ab4ff',
 }
 
 const mono: React.CSSProperties = {
@@ -32,14 +31,15 @@ const card: React.CSSProperties = {
   padding: '20px 24px',
 }
 
-// ── Known members for recipient selection ─────────────────────────────────────
-const MEMBERS = [
+// ── Demo targets (other members' X25519 pubkeys, derived from DEMO keys) ──────
+// Used as send targets in demo mode. In production, pubkeys would be
+// fetched from a key registry (on-chain or IPFS).
+const DEMO_MEMBERS = [
   createWallet(DEMO_PRIVATE_KEYS.A, 'Alice'),
   createWallet(DEMO_PRIVATE_KEYS.B, 'Bob'),
   createWallet(DEMO_PRIVATE_KEYS.C, 'Charlie'),
 ]
 
-// ── Status badge ──────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: string }) {
   const color =
     status === 'connected'  ? C.green  :
@@ -47,37 +47,31 @@ function StatusBadge({ status }: { status: string }) {
     status === 'error'      ? C.red    : C.muted
 
   const label =
-    status === 'connected'  ? '● connected'  :
+    status === 'connected'  ? '● connected'   :
     status === 'connecting' ? '◌ connecting…' :
-    status === 'error'      ? '✗ error'      : '○ idle'
+    status === 'error'      ? '✗ error'       : '○ idle'
 
-  return (
-    <span style={{ ...mono, fontSize: 11, color, fontWeight: 700 }}>
-      {label}
-    </span>
-  )
+  return <span style={{ ...mono, fontSize: 11, color, fontWeight: 700 }}>{label}</span>
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
 export default function MessengerView() {
   const { address } = useAccount()
-  const { wallet, status, messages, connect, send } = useMessenger(address)
+  const { status, signing, myPubKey, messages, connect, send, signError } = useMessenger(address)
 
-  const [recipient, setRecipient] = useState<number>(0) // index into MEMBERS
+  const [recipientIdx, setRecipientIdx] = useState(0)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
 
-  // Other members (exclude self)
-  const others = MEMBERS.filter(m => m.ethAddress !== wallet?.ethAddress)
+  // In demo mode, send to any of the known demo members
+  const targets = DEMO_MEMBERS
 
   async function handleSend() {
-    if (!draft.trim() || !wallet) return
+    if (!draft.trim()) return
     setSending(true)
     setSendError(null)
     try {
-      const target = others[recipient]
-      await send(target.x25519.publicKey, draft.trim())
+      await send(targets[recipientIdx].x25519.publicKey, draft.trim())
       setDraft('')
     } catch (e) {
       setSendError(e instanceof Error ? e.message : String(e))
@@ -98,73 +92,83 @@ export default function MessengerView() {
             textTransform: 'uppercase', color: C.muted, margin: 0 }}>
             Waku · L1 Transport
           </p>
-          <StatusBadge status={status} />
+          <StatusBadge status={signing ? 'connecting' : status} />
         </div>
 
         {!address ? (
           <span style={{ ...mono, color: C.muted }}>
             Connect your wallet in the Live tab first.
           </span>
-        ) : !wallet ? (
-          <span style={{ ...mono, color: C.red }}>
-            Address {address.slice(0, 10)}… is not a recognised member (Alice/Bob/Charlie).
-          </span>
-        ) : status === 'idle' || status === 'error' ? (
+        ) : status === 'connected' ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ ...mono, color: C.green }}>
+              Ready · {address.slice(0, 10)}…
+            </span>
+            {myPubKey && (
+              <span style={{ ...mono, color: C.muted, fontSize: 10, wordBreak: 'break-all' }}>
+                X25519 · 0x{bytesToHex(myPubKey)}
+              </span>
+            )}
+            {myPubKey && (
+              <span style={{ ...mono, color: C.muted, fontSize: 10 }}>
+                topic · /whispery/1/neighbor-0x{bytesToHex(myPubKey.slice(0, 2))}/proto
+              </span>
+            )}
+          </div>
+        ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {signing && (
+              <span style={{ ...mono, color: C.yellow }}>
+                Check MetaMask — sign the SIWE message to derive your keypair…
+              </span>
+            )}
+            {status === 'connecting' && !signing && (
+              <span style={{ ...mono, color: C.yellow }}>
+                Joining The Waku Network… (may take up to 30 s)
+              </span>
+            )}
             {status === 'error' && (
               <span style={{ ...mono, color: C.red, fontSize: 11 }}>
                 Failed to connect. Check your network and retry.
               </span>
             )}
-            <button
-              onClick={connect}
-              style={{
-                background: C.accent, color: '#fff', border: 'none',
-                borderRadius: 6, padding: '10px 20px',
-                ...mono, fontWeight: 700, cursor: 'pointer',
-                alignSelf: 'flex-start',
-              }}
-            >
-              Connect to Waku
-            </button>
-          </div>
-        ) : status === 'connecting' ? (
-          <span style={{ ...mono, color: C.yellow }}>
-            Joining The Waku Network… (may take up to 30 s)
-          </span>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <span style={{ ...mono, color: C.green }}>
-              Connected as <strong>{wallet.label}</strong>
-            </span>
-            <span style={{ ...mono, color: C.muted, fontSize: 10, wordBreak: 'break-all' }}>
-              X25519 pubkey · 0x{bytesToHex(wallet.x25519.publicKey)}
-            </span>
-            <span style={{ ...mono, color: C.muted, fontSize: 10 }}>
-              topic · /whispery/1/neighbor-0x{bytesToHex(wallet.x25519.publicKey.slice(0, 2))}/proto
-            </span>
+            {signError && (
+              <span style={{ ...mono, color: C.red, fontSize: 11 }}>{signError}</span>
+            )}
+            {!signing && status !== 'connecting' && (
+              <button
+                onClick={connect}
+                style={{
+                  background: C.accent, color: '#fff', border: 'none',
+                  borderRadius: 6, padding: '10px 20px',
+                  ...mono, fontWeight: 700, cursor: 'pointer',
+                  alignSelf: 'flex-start',
+                }}
+              >
+                Connect to Waku
+              </button>
+            )}
           </div>
         )}
       </div>
 
-      {/* Compose — only when connected */}
-      {status === 'connected' && wallet && (
+      {/* Compose */}
+      {status === 'connected' && (
         <div style={card}>
           <p style={{ ...mono, fontSize: 10, fontWeight: 700, letterSpacing: 1.5,
             textTransform: 'uppercase', color: C.muted, margin: '0 0 14px' }}>
             Send message
           </p>
 
-          {/* Recipient selector */}
           <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-            {others.map((m, i) => (
+            {targets.map((m, i) => (
               <button
                 key={m.ethAddress}
-                onClick={() => setRecipient(i)}
+                onClick={() => setRecipientIdx(i)}
                 style={{
-                  background: recipient === i ? C.accent : 'transparent',
-                  color: recipient === i ? '#fff' : C.muted,
-                  border: `1px solid ${recipient === i ? C.accent : C.border}`,
+                  background: recipientIdx === i ? C.accent : 'transparent',
+                  color: recipientIdx === i ? '#fff' : C.muted,
+                  border: `1px solid ${recipientIdx === i ? C.accent : C.border}`,
                   borderRadius: 6, padding: '4px 12px',
                   ...mono, fontWeight: 700, cursor: 'pointer',
                 }}
@@ -174,7 +178,6 @@ export default function MessengerView() {
             ))}
           </div>
 
-          {/* Input + send */}
           <div style={{ display: 'flex', gap: 8 }}>
             <input
               value={draft}
@@ -229,7 +232,8 @@ export default function MessengerView() {
                   maxWidth: '80%', wordBreak: 'break-word',
                   ...mono,
                 }}>
-                  <div style={{ fontSize: 10, color: msg.direction === 'out' ? 'rgba(255,255,255,0.6)' : C.muted, marginBottom: 4 }}>
+                  <div style={{ fontSize: 10, marginBottom: 4,
+                    color: msg.direction === 'out' ? 'rgba(255,255,255,0.6)' : C.muted }}>
                     {msg.direction === 'out' ? 'you' : 'incoming'} · {new Date(msg.at).toLocaleTimeString()}
                   </div>
                   {msg.text}

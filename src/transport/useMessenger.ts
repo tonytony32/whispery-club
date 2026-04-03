@@ -1,24 +1,24 @@
 /**
- * useMessenger — React hook that wires together the Waku node,
- * L1Messenger, and the connected Ethereum wallet.
+ * useMessenger — React hook que conecta wagmi + SIWE + Waku + L1Messenger.
  *
- * Identity: derives the X25519 keypair from the connected address
- * by matching it against the known DEMO wallets (Alice/Bob/Charlie).
- * Returns null if the connected address is not a recognised member.
+ * Identidad:
+ *   No necesitamos la clave privada del usuario. Le pedimos a MetaMask que
+ *   firme un mensaje SIWE determinista. La firma → sha256 → seed X25519.
+ *   Siempre que el usuario use la misma wallet, obtendrá el mismo keypair.
  *
- * Lifecycle:
- *   idle       → user clicks "Connect to Waku"
- *   connecting → createWakuNode() in progress (may take 5-30 s)
- *   connected  → ready to send and receive
- *   error      → connection failed
+ * Flujo:
+ *   1. connect()  → solicita firma SIWE a MetaMask
+ *   2. Firma recibida → derivar X25519 → createWakuNode → subscribe
+ *   3. Listo para enviar y recibir
  */
 
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { useSignMessage } from 'wagmi'
 import type { LightNode } from '@waku/sdk'
-import { createWallet, DEMO_PRIVATE_KEYS } from '../core/crypto'
-import type { Wallet } from '../core/crypto'
+import { siweMessage, x25519FromSig } from '../core/crypto'
 import { createWakuNode, type NodeStatus } from './node'
 import { L1Messenger } from './messenger'
+import nacl from 'tweetnacl'
 
 export interface ChatMessage {
   text: string
@@ -27,86 +27,79 @@ export interface ChatMessage {
 }
 
 export interface UseMessengerResult {
-  /** Wallet identity derived from the connected address, or null if unknown. */
-  wallet: Wallet | null
   status: NodeStatus
+  /** 'signing' while waiting for MetaMask signature. */
+  signing: boolean
+  /** Own X25519 pubkey once derived, null before signing. */
+  myPubKey: Uint8Array | null
   messages: ChatMessage[]
-  /** Start connecting to Waku. No-op if already connecting or connected. */
+  /** Trigger SIWE sign → Waku connect. No-op if already active. */
   connect: () => void
-  /** Send a plaintext message to a recipient identified by their X25519 pubkey. */
   send: (targetPubKey: Uint8Array, text: string) => Promise<void>
+  signError: string | null
 }
 
-// Pre-build the demo wallet list once
-const DEMO_WALLETS: Wallet[] = [
-  createWallet(DEMO_PRIVATE_KEYS.A, 'Alice'),
-  createWallet(DEMO_PRIVATE_KEYS.B, 'Bob'),
-  createWallet(DEMO_PRIVATE_KEYS.C, 'Charlie'),
-]
-
 export function useMessenger(ethAddress: string | undefined): UseMessengerResult {
-  const [status, setStatus]   = useState<NodeStatus>('idle')
+  const [status, setStatus]     = useState<NodeStatus>('idle')
+  const [signing, setSigning]   = useState(false)
+  const [signError, setSignError] = useState<string | null>(null)
+  const [myPubKey, setMyPubKey] = useState<Uint8Array | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [trigger, setTrigger] = useState(0) // incremented by connect()
 
   const nodeRef      = useRef<LightNode | null>(null)
   const messengerRef = useRef<L1Messenger | null>(null)
+  const x25519Ref    = useRef<nacl.BoxKeyPair | null>(null)
 
-  // Match connected address to a demo wallet
-  const wallet = useMemo<Wallet | null>(() => {
-    if (!ethAddress) return null
-    return DEMO_WALLETS.find(
-      w => w.ethAddress.toLowerCase() === ethAddress.toLowerCase()
-    ) ?? null
-  }, [ethAddress])
+  const { signMessageAsync } = useSignMessage()
 
-  // Connect to Waku when triggered
+  // Cleanup on unmount
   useEffect(() => {
-    if (trigger === 0 || !wallet || status === 'connecting' || status === 'connected') return
+    return () => { nodeRef.current?.stop() }
+  }, [])
 
-    const w = wallet // capture for async closure
-    let cancelled = false
-
-    async function init() {
-      try {
-        const node = await createWakuNode({
-          onStatus: (s, detail) => {
-            if (!cancelled) {
-              setStatus(s)
-              if (detail) console.warn('[Waku]', detail)
-            }
-          },
-        })
-        if (cancelled) { await node.stop(); return }
-
-        nodeRef.current = node
-        const messenger = new L1Messenger(node, w.x25519.secretKey)
-        messengerRef.current = messenger
-
-        await messenger.subscribe()
-        messenger.addEventListener('message', (e) => {
-          if (cancelled) return
-          const { text } = (e as CustomEvent<{ text: string }>).detail
-          setMessages(prev => [...prev, { text, direction: 'in', at: Date.now() }])
-        })
-      } catch {
-        if (!cancelled) setStatus('error')
-      }
-    }
-
-    init()
-    return () => {
-      cancelled = true
-      nodeRef.current?.stop()
-      nodeRef.current = null
-      messengerRef.current = null
-    }
-  }, [trigger, wallet]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  function connect() {
+  async function connect() {
+    if (!ethAddress) return
     if (status === 'connecting' || status === 'connected') return
-    setStatus('idle')
-    setTrigger(t => t + 1)
+
+    setSigning(true)
+    setSignError(null)
+
+    let kp: nacl.BoxKeyPair
+    try {
+      // Ask MetaMask to sign the deterministic SIWE message
+      const sig = await signMessageAsync({ message: siweMessage(ethAddress) })
+      kp = x25519FromSig(sig)
+      x25519Ref.current = kp
+      setMyPubKey(kp.publicKey)
+    } catch (e) {
+      setSigning(false)
+      setSignError(e instanceof Error ? e.message : 'Signature rejected')
+      return
+    }
+
+    setSigning(false)
+
+    // Connect to Waku
+    try {
+      const node = await createWakuNode({
+        onStatus: (s, detail) => {
+          setStatus(s)
+          if (detail) console.warn('[Waku]', detail)
+        },
+      })
+
+      nodeRef.current = node
+      const messenger = new L1Messenger(node, kp.secretKey)
+      messengerRef.current = messenger
+
+      await messenger.subscribe()
+      messenger.addEventListener('message', (e) => {
+        const { text } = (e as CustomEvent<{ text: string }>).detail
+        setMessages(prev => [...prev, { text, direction: 'in', at: Date.now() }])
+      })
+    } catch {
+      setStatus('error')
+    }
   }
 
   async function send(targetPubKey: Uint8Array, text: string) {
@@ -115,5 +108,5 @@ export function useMessenger(ethAddress: string | undefined): UseMessengerResult
     setMessages(prev => [...prev, { text, direction: 'out', at: Date.now() }])
   }
 
-  return { wallet, status, messages, connect, send }
+  return { status, signing, myPubKey, messages, connect, send, signError }
 }

@@ -138,7 +138,7 @@ function ethAddress(privKey: Uint8Array): string {
  * NOTA: intencionalmente no-spec para derivación determinista del par X25519.
  * Un nonce variable o issued-at produciría una identidad diferente en cada sesión.
  */
-function siweMessage(address: string): string {
+export function siweMessage(address: string): string {
   return [
     'whispery.club wants you to sign in with your Ethereum account:',
     address,
@@ -172,6 +172,18 @@ export function createWallet(privKeyHex: string, label: string): Wallet {
     ethAddress: address,
     x25519: nacl.box.keyPair.fromSecretKey(seed),
   }
+}
+
+/**
+ * Deriva el keypair X25519 desde una firma SIWE obtenida vía MetaMask.
+ * MetaMask aplica el mismo prefijo EIP-191 que siweSign, así que la firma
+ * es idéntica y el keypair resultante es el mismo que createWallet produciría.
+ *
+ * @param signatureHex  Firma hex (0x…, 65 bytes) devuelta por wagmi signMessage.
+ */
+export function x25519FromSig(signatureHex: string): nacl.BoxKeyPair {
+  const seed = sha256(fromHex(signatureHex.replace(/^0x/, '')))
+  return nacl.box.keyPair.fromSecretKey(seed)
 }
 
 // ─── Escenario A: Canal P2P ──────────────────────────────────────────────────
