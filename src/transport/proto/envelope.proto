@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+// Whispery L1 — wire format for a single message on Waku.
+//
+// mac_hint  8 bytes  Fast filter: HMAC-SHA256(recipientPubKey, "SWARM_L1_HINT")[0:8].
+//                    Lets a node discard ~99.99 % of neighborhood traffic
+//                    before attempting ECIES decryption.
+//
+// data      bytes    ECIES-sealed payload: ephemeralPub(32) | nonce(24) | box_output.
+//                    Only the holder of the matching X25519 secret key can open it.
+
+message Envelope {
+  bytes mac_hint = 1;
+  bytes data     = 2;
+}
