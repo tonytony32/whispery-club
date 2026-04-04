@@ -12,6 +12,7 @@ export interface ChatMessage {
   text: string
   direction: 'in' | 'out'
   at: number
+  senderPk?: string   // hex X25519 pubkey — populated for 'in' messages
 }
 
 export interface UseMessengerResult {
@@ -84,8 +85,8 @@ export function useMessenger(
     messengerRef.current = messenger
 
     messenger.addEventListener('message', (e) => {
-      const { text, timestamp } = (e as CustomEvent<{ text: string; timestamp: number }>).detail
-      setMessages(prev => [...prev, { text, direction: 'in', at: timestamp ?? Date.now() }])
+      const { text, senderPk, timestamp } = (e as CustomEvent<{ text: string; senderPk: string; timestamp: number }>).detail
+      setMessages(prev => [...prev, { text, direction: 'in', senderPk, at: timestamp ?? Date.now() }])
     })
 
     if (contentKeyRef.current && channelIdRef.current) {

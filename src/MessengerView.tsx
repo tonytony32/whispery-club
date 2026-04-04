@@ -95,7 +95,7 @@ function ModeBadge({ isDemoMode }: { isDemoMode: boolean }) {
 }
 
 function ParticipantPanel({
-  label, accent, pointer, eeeEpoch, result, logs,
+  label, accent, pointer, eeeEpoch, result, logs, senderNames,
 }: {
   label: string
   accent: string
@@ -103,6 +103,7 @@ function ParticipantPanel({
   eeeEpoch: bigint
   result: UseMessengerResult
   logs: string[]
+  senderNames: Map<string, string>
 }) {
   const { status, signing, myPubKey, messages, connect, send, signError, isDemoMode } = result
   const [draft, setDraft]         = useState('')
@@ -229,7 +230,10 @@ function ParticipantPanel({
               }}>
                 <div style={{ fontSize: 10, marginBottom: 2,
                   color: msg.direction === 'out' ? 'rgba(255,255,255,0.5)' : C.muted }}>
-                  {msg.direction === 'out' ? label.toLowerCase() : 'group'} · {new Date(msg.at).toLocaleTimeString()}
+                  {msg.direction === 'out'
+                    ? label.toLowerCase()
+                    : (msg.senderPk && senderNames.get(msg.senderPk)) ?? msg.senderPk?.slice(0, 8) ?? 'unknown'
+                  } · {new Date(msg.at).toLocaleTimeString()}
                 </div>
                 {msg.text}
               </div>
@@ -293,6 +297,11 @@ export default function MessengerView() {
   const aliceResult = useMessenger(address, pointer, 'Alice', addAliceLog)
   const bettyResult = useDemoMessenger(DEMO_PRIVATE_KEYS.B, 'Betty', pointer, addBettyLog)
 
+  // Map X25519 pubkey hex → display name so message bubbles show "alice" / "betty"
+  const senderNames = new Map<string, string>()
+  if (aliceResult.myPubKey) senderNames.set(bytesToHex(aliceResult.myPubKey), 'alice')
+  if (bettyResult.myPubKey) senderNames.set(bytesToHex(bettyResult.myPubKey), 'betty')
+
   if (!address) {
     return (
       <div style={{ maxWidth: 480, margin: '40px auto', padding: 32 }}>
@@ -315,11 +324,13 @@ export default function MessengerView() {
         label="Alice" accent={C.accent}
         pointer={pointer} eeeEpoch={eeeEpoch}
         result={aliceResult} logs={aliceLogs}
+        senderNames={senderNames}
       />
       <ParticipantPanel
         label="Betty" accent={C.orange}
         pointer={pointer} eeeEpoch={eeeEpoch}
         result={bettyResult} logs={bettyLogs}
+        senderNames={senderNames}
       />
     </div>
   )
