@@ -1,17 +1,21 @@
 /**
- * Unit tests for L0 sender verification in openGroupEnvelope.
+ * Unit tests for L0 in-band sender verification in openGroupEnvelope.
  *
- * The signature field in the Envelope covers all fields except itself (canonical JSON,
- * keys sorted alphabetically). It is signed with the sender's secp256k1 derived signing key.
+ * In-band design: createGroupEnvelope embeds the sender's secp256k1 signing
+ * public key (33 bytes, compressed) as a prefix inside the ciphertext:
  *
- * These tests confirm:
- *   - Valid signature + registered sender → message decrypts fine
- *   - Invalid signature (tampered payload) → throws
- *   - Unknown sender (not in registry) → throws
- *   - No registry provided → decrypts without signature check (backward compat)
+ *   plaintext = signingPubKey[33] || message_utf8
+ *
+ * openGroupEnvelope:
+ *   1. Decrypts with content_key (secretbox — Poly1305 rejects any tampering)
+ *   2. Extracts signingPubKey from the first 33 bytes
+ *   3. Verifies the outer signature (layer 5) against sha256(canonical_envelope)
+ *   4. Throws "firma inválida" on any failure — no silent degradation
  */
 
 import { describe, it, expect } from 'vitest'
+import nacl from 'tweetnacl'
+import { secp256k1 } from '@noble/curves/secp256k1'
 import { bytesToHex } from '@noble/hashes/utils'
 import {
   createWallet,
@@ -19,7 +23,7 @@ import {
   accessGroupChannel,
   openGroupEnvelope,
   createGroupEnvelope,
-  buildKeyRegistry,
+  fromHex,
   DEMO_PRIVATE_KEYS,
   type Envelope,
 } from '../crypto'
@@ -29,7 +33,6 @@ import {
 const walletAlice   = createWallet(DEMO_PRIVATE_KEYS.A, 'Alice')
 const walletBob     = createWallet(DEMO_PRIVATE_KEYS.B, 'Bob')
 const walletCharlie = createWallet(DEMO_PRIVATE_KEYS.C, 'Charlie')
-const walletEve     = createWallet(DEMO_PRIVATE_KEYS.D, 'Eve')  // not a member
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -39,70 +42,73 @@ function makeChannel() {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('openGroupEnvelope — sender verification', () => {
-  it('valid signature + known sender → decrypts correctly', () => {
+describe('openGroupEnvelope — in-band sender verification', () => {
+  it('valid envelope → decrypts and verifies signature', () => {
     const { eee, content_key } = makeChannel()
     const ckBob = accessGroupChannel(walletBob, eee)!
 
-    const env = createGroupEnvelope(walletAlice, content_key, eee.channel_id, 'hola grupo', eee.epoch)
-
-    const registry = buildKeyRegistry([walletAlice, walletBob, walletCharlie])
-    const text = openGroupEnvelope(ckBob, env, registry)
+    const env  = createGroupEnvelope(walletAlice, content_key, eee.channel_id, 'hola grupo', eee.epoch)
+    const text = openGroupEnvelope(ckBob, env)
 
     expect(text).toBe('hola grupo')
   })
 
-  it('tampered ciphertext → decryption fails regardless of registry', () => {
+  it('all three members decrypt the same envelope', () => {
+    const { eee, content_key } = makeChannel()
+    const ckAlice   = accessGroupChannel(walletAlice, eee)!
+    const ckBob     = accessGroupChannel(walletBob, eee)!
+    const ckCharlie = accessGroupChannel(walletCharlie, eee)!
+
+    const env = createGroupEnvelope(walletBob, content_key, eee.channel_id, 'broadcast', eee.epoch)
+
+    expect(openGroupEnvelope(ckAlice, env)).toBe('broadcast')
+    expect(openGroupEnvelope(ckBob, env)).toBe('broadcast')
+    expect(openGroupEnvelope(ckCharlie, env)).toBe('broadcast')
+  })
+
+  it('tampered ciphertext → secretbox rejects before signature check', () => {
     const { eee, content_key } = makeChannel()
     const ckBob = accessGroupChannel(walletBob, eee)!
 
-    const env = createGroupEnvelope(walletAlice, content_key, eee.channel_id, 'hola grupo', eee.epoch)
-    const tampered: Envelope = { ...env, ciphertext: env.ciphertext.replace(/.$/, 'f') }
+    const env      = createGroupEnvelope(walletAlice, content_key, eee.channel_id, 'hola', eee.epoch)
+    const tampered: Envelope = { ...env, ciphertext: env.ciphertext.slice(0, -2) + 'ff' }
 
-    // Without registry — secretbox rejects
     expect(() => openGroupEnvelope(ckBob, tampered)).toThrow('fallo en descifrado')
   })
 
-  it('tampered signature → throws before decryption', () => {
+  it('tampered outer signature → throws firma inválida', () => {
     const { eee, content_key } = makeChannel()
     const ckBob = accessGroupChannel(walletBob, eee)!
 
-    const env = createGroupEnvelope(walletAlice, content_key, eee.channel_id, 'hola grupo', eee.epoch)
-    // Flip one byte in the signature
+    const env    = createGroupEnvelope(walletAlice, content_key, eee.channel_id, 'hola', eee.epoch)
     const badSig = env.signature.slice(0, -2) + (env.signature.endsWith('ff') ? '00' : 'ff')
     const tampered: Envelope = { ...env, signature: badSig }
 
-    const registry = buildKeyRegistry([walletAlice, walletBob, walletCharlie])
-    expect(() => openGroupEnvelope(ckBob, tampered, registry)).toThrow('firma inválida')
+    expect(() => openGroupEnvelope(ckBob, tampered)).toThrow('firma inválida')
   })
 
-  it('unknown sender (not in registry) → throws', () => {
+  it('envelope with wrong content_key → secretbox rejects', () => {
     const { eee, content_key } = makeChannel()
-    const ckBob = accessGroupChannel(walletBob, eee)!
+    // Create a second channel with a different content_key
+    const { content_key: otherKey } = makeChannel()
 
-    // Eve crafts an envelope with her own wallet
-    const env = createGroupEnvelope(walletEve, content_key, eee.channel_id, 'impersonate', eee.epoch)
-
-    // Registry does not include Eve
-    const registry = buildKeyRegistry([walletAlice, walletBob, walletCharlie])
-    expect(() => openGroupEnvelope(ckBob, env, registry)).toThrow('no está en el key registry')
+    const env = createGroupEnvelope(walletAlice, content_key, eee.channel_id, 'hola', eee.epoch)
+    expect(() => openGroupEnvelope(otherKey, env)).toThrow('fallo en descifrado')
   })
 
-  it('no registry → decrypts without signature check (backward compat)', () => {
+  it('signing key inside ciphertext matches sender ethPrivKey', () => {
     const { eee, content_key } = makeChannel()
-    const ckBob = accessGroupChannel(walletBob, eee)!
+    const expectedSigningPk = bytesToHex(secp256k1.getPublicKey(walletAlice.ethPrivKey, true))
 
-    const env = createGroupEnvelope(walletAlice, content_key, eee.channel_id, 'sin verificar', eee.epoch)
-    const text = openGroupEnvelope(ckBob, env)
+    const env = createGroupEnvelope(walletAlice, content_key, eee.channel_id, 'verify', eee.epoch)
 
-    expect(text).toBe('sin verificar')
-  })
+    // Decrypt manually and inspect the 33-byte prefix
+    const raw   = fromHex(env.ciphertext)
+    const nonce = raw.slice(0, 24)
+    const box   = raw.slice(24)
+    const plain = nacl.secretbox.open(box, nonce, content_key)!
+    const extractedSpk = bytesToHex(plain.slice(0, 33))
 
-  it('buildKeyRegistry maps each wallet x25519 pubKey to its signing pubKey', () => {
-    const registry = buildKeyRegistry([walletAlice, walletBob])
-
-    expect(registry.has(bytesToHex(walletAlice.x25519.publicKey))).toBe(true)
-    expect(registry.has(bytesToHex(walletBob.x25519.publicKey))).toBe(true)
-    expect(registry.size).toBe(2)
+    expect(extractedSpk).toBe(expectedSigningPk)
   })
 })

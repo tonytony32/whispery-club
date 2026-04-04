@@ -356,9 +356,22 @@ export function accessGroupChannel(member: Wallet, eee: EEE): Uint8Array | null 
   return nacl.secretbox.open(box, nonce, access_kdk)  // null si alterado
 }
 
+// Longitud fija de la clave pública secp256k1 comprimida (formato 02/03 + 32 bytes X).
+const SIGNING_PK_LEN = 33
+
 /**
  * Un miembro autorizado cifra un mensaje para el canal.
  * Usa el content_key compartido (obtenido vía accessGroupChannel).
+ *
+ * Verificación in-band (Reto 4 extendido):
+ *   El plaintext que se cifra con content_key lleva la clave pública de firma
+ *   secp256k1 del emisor como prefijo de 33 bytes (comprimida):
+ *
+ *     plaintext = signingPubKey[33] || message_utf8
+ *
+ *   Al descifrar, openGroupEnvelope extrae esos 33 bytes y los usa directamente
+ *   para verificar la firma de la Capa 5. No se necesita ningún registro externo:
+ *   la identidad viaja dentro del ciphertext, invisible para la capa de transporte.
  */
 export function createGroupEnvelope(
   sender: Wallet,
@@ -367,8 +380,11 @@ export function createGroupEnvelope(
   message: string,
   epoch = 0,
 ): Envelope {
-  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength)
-  const box = nacl.secretbox(enc.encode(message), nonce, content_key)
+  const signingPubKey = secp256k1.getPublicKey(sender.ethPrivKey, true) // 33 bytes, comprimida
+  const plaintext     = concatBytes(signingPubKey, enc.encode(message))
+
+  const nonce      = nacl.randomBytes(nacl.secretbox.nonceLength)
+  const box        = nacl.secretbox(plaintext, nonce, content_key)
   const ciphertext = toHex(concatBytes(nonce, box))
 
   const partial = {
@@ -384,73 +400,43 @@ export function createGroupEnvelope(
 }
 
 /**
- * KeyRegistry — mapeo en memoria entre sender_pk (X25519, hex) y la clave de firma
- * secp256k1 comprimida (33 bytes) del emisor.
+ * Descifra un envelope de grupo y verifica la firma secp256k1 del emisor.
  *
- * Es el sustituto temporal del Key Registry on-chain. En producción, este mapa
- * se construirá consultando el contrato de registro de claves.
+ * Flujo:
+ *   1. secretbox.open(ciphertext, nonce, content_key) → plaintext
+ *      Falla si el ciphertext fue alterado (Poly1305 lo detecta).
+ *   2. signingPubKey = plaintext[0:33]   ← clave pública de firma in-band
+ *      message       = plaintext[33:]    ← texto del mensaje
+ *   3. hash = sha256(canonical_JSON_sin_signature)
+ *      secp256k1.verify(envelope.signature, hash, signingPubKey)
+ *      → false ⟹ lanza 'firma inválida'
  *
- * Clave:  hex(wallet.x25519.publicKey)  ← igual que Envelope.sender_pk
- * Valor:  secp256k1.getPublicKey(wallet.ethPrivKey, true)  ← 33 bytes comprimidos
- */
-export type KeyRegistry = Map<string, Uint8Array>
-
-/**
- * Construye un KeyRegistry a partir de un array de Wallets.
- * Útil para tests y demos; en producción el mapa proviene del contrato on-chain.
- */
-export function buildKeyRegistry(wallets: Wallet[]): KeyRegistry {
-  const registry: KeyRegistry = new Map()
-  for (const w of wallets) {
-    registry.set(toHex(w.x25519.publicKey), secp256k1.getPublicKey(w.ethPrivKey, true))
-  }
-  return registry
-}
-
-/**
- * Verifica la firma secp256k1 del envelope contra la clave pública de firma del emisor.
- * Lanza si la firma no es válida — indica impersonación o payload alterado.
- */
-function verifyEnvelopeSignature(envelope: Envelope, signingPubKey: Uint8Array): void {
-  const hash = sha256(enc.encode(canonicalize(envelope as Record<string, unknown>)))
-  const sigBytes = fromHex(envelope.signature)
-  const valid = secp256k1.verify(sigBytes, hash, signingPubKey)
-  if (!valid) throw new Error('Whispery: firma inválida — posible impersonación o payload alterado')
-}
-
-/**
- * Descifra un envelope de grupo con el content_key.
- *
- * Si se proporciona un `keyRegistry`, verifica la firma secp256k1 del emisor antes
- * de descifrar. El emisor debe estar en el registro; si no está o la firma no es
- * válida, lanza un error y el mensaje se descarta.
- *
- * @param content_key  Clave compartida del canal (obtenida via accessGroupChannel).
+ * @param content_key  Clave compartida del canal (via accessGroupChannel).
  * @param envelope     L0 Envelope recibido del transporte.
- * @param keyRegistry  Opcional — mapa sender_pk → secp256k1SigningPubKey.
- *                     Si se omite, se descifra sin verificar la firma del emisor.
  */
-export function openGroupEnvelope(
-  content_key: Uint8Array,
-  envelope: Envelope,
-  keyRegistry?: KeyRegistry,
-): string {
-  if (keyRegistry) {
-    const signingPubKey = keyRegistry.get(envelope.sender_pk)
-    if (!signingPubKey) {
-      throw new Error(
-        `Whispery: sender desconocido — ${envelope.sender_pk.slice(0, 16)}… no está en el key registry`,
-      )
-    }
-    verifyEnvelopeSignature(envelope, signingPubKey)
-  }
-
-  const raw = fromHex(envelope.ciphertext)
+export function openGroupEnvelope(content_key: Uint8Array, envelope: Envelope): string {
+  // ── Capa 3: descifrar con content_key ─────────────────────────────────────
+  const raw   = fromHex(envelope.ciphertext)
   const nonce = raw.slice(0, nacl.secretbox.nonceLength)
-  const box = raw.slice(nacl.secretbox.nonceLength)
+  const box   = raw.slice(nacl.secretbox.nonceLength)
   const plain = nacl.secretbox.open(box, nonce, content_key)
   if (!plain) throw new Error('Group: fallo en descifrado')
-  return dec.decode(plain)
+
+  // ── Extraer clave de firma in-band ────────────────────────────────────────
+  if (plain.length <= SIGNING_PK_LEN) {
+    throw new Error('firma inválida — payload malformado, falta clave de firma in-band')
+  }
+  const signingPubKey = plain.slice(0, SIGNING_PK_LEN)
+  const msgBytes      = plain.slice(SIGNING_PK_LEN)
+
+  // ── Capa 5: verificar firma de no repudio ─────────────────────────────────
+  const hash     = sha256(enc.encode(canonicalize(envelope as Record<string, unknown>)))
+  const sigBytes = fromHex(envelope.signature)
+  if (!secp256k1.verify(sigBytes, hash, signingPubKey)) {
+    throw new Error('firma inválida — posible impersonación o payload alterado')
+  }
+
+  return dec.decode(msgBytes)
 }
 
 // ─── Rotación de Claves — Reto 3 ─────────────────────────────────────────────

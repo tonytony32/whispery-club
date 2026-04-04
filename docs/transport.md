@@ -234,13 +234,12 @@ Member receives a message on the channel topic
   ├─ decode(payload) → { mac_hint, data }
   ├─ mac_hint == channelHint? → No  → "Group: Ignored by channel hint"
   │                           → Yes → JSON.parse(data) → L0 Envelope
-  ├─ openGroupEnvelope(content_key, l0, keyRegistry?)
-  │     if keyRegistry provided:
-  │       ├─ look up l0.sender_pk in registry → signingPubKey
-  │       ├─ sender unknown? → throw (discard)
-  │       └─ secp256k1.verify(l0.signature, sha256(canonical), signingPubKey)
-  │             invalid? → throw "firma inválida" (discard)
-  │     secretbox.open(ciphertext, nonce, content_key) → "hello"
+  ├─ openGroupEnvelope(content_key, l0)
+  │     secretbox.open(ciphertext, nonce, content_key) → plaintext
+  │     signingPubKey = plaintext[0:33]   ← in-band signing key
+  │     message       = plaintext[33:]
+  │     secp256k1.verify(l0.signature, sha256(canonical), signingPubKey)
+  │           invalid? → throw "firma inválida" (discard)
   └─ emit 'message' event → { text, senderPk, timestamp } → UI
 ```
 
@@ -271,34 +270,41 @@ src/transport/
 src/core/
   ipfs.ts               uploadJSON (write) + fetchJSON (read) via IPFS gateway
   crypto.ts             L0 crypto: createGroupEnvelope / openGroupEnvelope / accessGroupChannel
-                          KeyRegistry + buildKeyRegistry (sender verification)
+                          in-band sender verification (signingPubKey prefix inside ciphertext)
   __tests__/
     crypto.test.ts      L0 sender verification tests (6)
 ```
 
 ---
 
-## Sender verification (implemented at L0)
+## Sender verification (implemented — in-band)
 
-`openGroupEnvelope` accepts an optional `KeyRegistry` — a `Map<string, Uint8Array>` mapping each member's X25519 `sender_pk` (hex) to their secp256k1 signing public key (33 bytes, compressed). It lives entirely in `src/core/crypto.ts` — the transport layer is unaware of it.
+`openGroupEnvelope` always verifies the sender's secp256k1 signature. No external registry is needed: the signing public key travels **inside the ciphertext** as a 33-byte prefix, invisible to the transport layer.
 
-If a registry is provided:
-- The sender must be in the registry — unknown senders are rejected before decryption.
-- The `signature` field is verified against `sha256(canonical_JSON)` using the registered public key.
-- An invalid signature throws `"firma inválida"` — the message is discarded.
+**How the sender packs it (`createGroupEnvelope`):**
 
-```typescript
-// Build the registry from known wallets (temporary; production: on-chain contract)
-const registry = buildKeyRegistry([walletAlice, walletBob, walletCharlie])
-const text = openGroupEnvelope(contentKey, envelope, registry)
+```
+signingPubKey = secp256k1.getPublicKey(sender.ethPrivKey, true)  // 33 bytes, compressed
+plaintext     = signingPubKey[33] || message_utf8
+ciphertext    = nonce[24] || secretbox(plaintext, nonce, content_key)
 ```
 
-Without a registry, `openGroupEnvelope` decrypts but skips signature verification (backward compatible).
+**How the recipient unpacks it (`openGroupEnvelope`):**
+
+```
+plain         = secretbox.open(ciphertext, nonce, content_key)   // Poly1305 rejects tampering
+signingPubKey = plain[0:33]
+message       = plain[33:]
+hash          = sha256(canonical_JSON_without_signature)
+secp256k1.verify(envelope.signature, hash, signingPubKey)        // throws "firma inválida" if false
+```
+
+If the signature doesn't match or the payload is malformed, `"firma inválida"` is thrown and the message is discarded. There is no silent degradation.
 
 ---
 
 ## What is not implemented yet
 
-- **Key registry on-chain**: to populate `KeyRegistry` in production, each member must publish their secp256k1 signing public key on-chain. A natural fit: add `registerKey(bytes32 x25519PubKey, bytes secp256k1SigningPubKey)` to the NFT or Backpack contract. Once deployed, `L1Messenger.subscribeGroup` can fetch it and pass it to `openGroupEnvelope`.
+- **Key registry on-chain**: the in-band `signingPubKey` is self-reported — binding it to a verified on-chain identity requires an external authority. A natural fit: `registerKey(bytes32 x25519PubKey, bytes secp256k1SigningPubKey)` on the NFT or Backpack contract. Once deployed, recipients can cross-check the in-band key against the registry.
 - **Store protocol**: messages sent while a peer is offline are lost. Waku has a Store protocol for retrieving message history.
 - **Key rotation**: if a user reinstalls MetaMask with the same seed phrase, they recover the same Ethereum keys → same SIWE signature → same Whispery keypair. Key rotation would require a versioned SIWE nonce or an explicit rotation mechanism.

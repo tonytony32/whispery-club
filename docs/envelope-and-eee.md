@@ -222,17 +222,18 @@ Proves that the holder of the Ethereum identity corresponding to `sender_pk`
 built this exact envelope with this exact content and this exact timestamp.
 Any modification to any field invalidates the signature.
 
-**Verification** (`openGroupEnvelope` with a `KeyRegistry`):
+**Verification — in-band (`openGroupEnvelope`):**
+
+The secp256k1 signing public key travels inside the ciphertext as a 33-byte prefix, invisible to the transport layer. After decryption, `openGroupEnvelope` extracts it and verifies immediately:
 
 ```
-signingPubKey = keyRegistry.get(envelope.sender_pk)  // registered secp256k1 pubkey
+plain         = secretbox.open(ciphertext, nonce, content_key)
+signingPubKey = plain[0:33]                            // in-band, no external registry needed
+message       = plain[33:]
 valid         = secp256k1.verify(signature, sha256(canonical), signingPubKey)
 ```
 
-If the signature is invalid or the sender is not in the registry, the message is
-rejected before decryption. Without a registry, decryption proceeds but the
-signature is not checked — this is the current default until the on-chain
-Key Registry is deployed.
+If the signature is invalid or the payload is malformed, `"firma inválida"` is thrown and the message is discarded. Verification is always enforced — there is no opt-out.
 
 ---
 
