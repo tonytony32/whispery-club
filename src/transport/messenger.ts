@@ -252,19 +252,24 @@ export class L1Messenger extends EventTarget {
 
   /**
    * lightPush with exponential-backoff retry.
-   * Waku peers occasionally disconnect right after waitForPeers resolves.
-   * Three attempts (500 ms → 1 s → 2 s) cover transient peer churn.
+   *
+   * Success condition: at least one peer accepted the push (successes.length > 0).
+   * With numPeersToUse=3, partial failures (e.g. 1 of 3 peers rejects) are fine
+   * — the message is already propagating through the other two.
+   *
+   * Delays [1 s → 3 s → 6 s] give libp2p time to discover a replacement peer
+   * when the original one drops mid-session.
    */
   private async sendWithRetry(
     encoder: ReturnType<typeof createEncoder>,
     payload: Uint8Array,
   ): Promise<void> {
-    const delays = [500, 1000, 2000]
+    const delays = [1000, 3000, 6000]
     let lastError = 'unknown'
     for (let i = 0; i <= delays.length; i++) {
       const result = await this.node.lightPush.send(encoder, { payload })
-      if (!result.failures?.length) return
-      lastError = result.failures.map(f => f.error).join(', ')
+      if (result.successes?.length) return          // at least one peer accepted
+      lastError = result.failures?.map(f => f.error).join(', ') ?? 'unknown'
       if (i < delays.length) await new Promise(r => setTimeout(r, delays[i]))
     }
     throw new Error(`Waku push failed: ${lastError}`)

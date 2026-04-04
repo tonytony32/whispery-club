@@ -18,7 +18,12 @@ export async function createWakuNode(options: WakuNodeOptions = {}): Promise<Lig
 
   let node: LightNode
   try {
-    node = await createLightNode({ defaultBootstrap: true })
+    node = await createLightNode({
+      defaultBootstrap: true,
+      // Use 3 peers per protocol so losing one doesn't immediately cause
+      // NO_PEER_AVAILABLE — the other two remain as fallback.
+      numPeersToUse: 3,
+    })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     onStatus?.('error', msg)
