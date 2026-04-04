@@ -111,6 +111,7 @@ export default function Omnibar() {
   // ENS path
   const [ensChecking, setEnsChecking]   = useState(false)
   const [ensError, setEnsError]         = useState<string | null>(null)
+  const [ensInfo, setEnsInfo]           = useState<string | null>(null)
   const [ensGranted, setEnsGranted]     = useState(false)
   const [ensDisplayName, setEnsDisplay] = useState<string | null>(null)
 
@@ -125,7 +126,7 @@ export default function Omnibar() {
 
     // Reset result state
     setNftError(null); setNftGranted(false); setConnectedDisplay(null)
-    setEnsError(null); setEnsGranted(false); setEnsDisplay(null)
+    setEnsError(null); setEnsInfo(null); setEnsGranted(false); setEnsDisplay(null)
 
     const initial = syncClassify(trimmed)
     setKind(initial)
@@ -234,24 +235,11 @@ export default function Omnibar() {
           setEnsError(`Your wallet doesn't hold a token from ${name}.`)
         }
       } else {
-        // INDIVIDUAL flow: ENS → personal wallet → verify connected wallet matches
-        if (connectedAddr.toLowerCase() !== resolved.toLowerCase()) {
-          setEnsError(
-            `This ENS name resolves to a different wallet.\n` +
-            `Connected: ${truncateAddress(connectedAddr)} · ` +
-            `Expected: ${truncateAddress(resolved)}`
-          )
-          return
-        }
-        const nft     = new ethers.Contract(WHISPERY_NFT_ADDRESS, ERC721_ABI, provider)
-        const balance = await nft.balanceOf(resolved)
-        if (balance > 0n) {
-          setEnsGranted(true)
-          setEnsDisplay(ensName)
-          setConnectedDisplay(ensName)
-        } else {
-          setEnsError(`${ensName} doesn't hold a membership token.`)
-        }
+        // INDIVIDUAL ENS → EOA: not a group, no chat
+        setEnsInfo(
+          `${ensName} es una dirección personal, no un grupo.\n` +
+          `Para acceder a un chat, usa el ENS de un grupo (p.ej. beachclaw.whispery.eth).`
+        )
       }
     } catch (err) {
       setEnsError(err instanceof Error ? err.message : 'ENS resolution failed.')
@@ -439,6 +427,17 @@ export default function Omnibar() {
           maxWidth: 600, width: '100%', textAlign: 'center',
         }}>
           {ensError}
+        </div>
+      )}
+
+      {ensInfo && (
+        <div style={{
+          ...mono, marginTop: 20, padding: '14px 20px',
+          background: C.raised, border: `1px solid ${C.border}`,
+          borderRadius: 10, color: C.muted, fontSize: 12,
+          maxWidth: 600, width: '100%', lineHeight: 1.7,
+        }}>
+          {ensInfo}
         </div>
       )}
 
