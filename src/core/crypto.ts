@@ -552,7 +552,7 @@ export function openGroupEnvelope(
   verifyKeyDerivation(siweSignature, realSenderPk, signingPubKey)
 
   // ── Validación 3: Firma L0 — no repudio sobre todos los campos del sobre ──
-  const hash     = sha256(enc.encode(canonicalize(envelope as Record<string, unknown>)))
+  const hash     = sha256(enc.encode(canonicalize(envelope as unknown as Record<string, unknown>)))
   const sigBytes = fromHex(envelope.signature)
   if (!secp256k1.verify(sigBytes, hash, signingPubKey)) {
     throw new Error('firma inválida — posible impersonación o payload alterado')

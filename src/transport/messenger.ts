@@ -149,6 +149,12 @@ export class L1Messenger extends EventTarget {
     const decoder  = createDecoder(topic, routingFor(topic))
     const myHint   = computeChannelHint(fromHex(channelId))
 
+    // Dedup: the first 48 hex chars of ciphertext = 24-byte random nonce,
+    // cryptographically unique per message. Each relay peer may deliver the
+    // same message, so we discard any ciphertext we've already processed.
+    const seen = new Set<string>()
+    const MAX_SEEN = 500
+
     await this.node.filter.subscribe([decoder], (msg) => {
       if (!msg.payload) return
 
@@ -166,6 +172,16 @@ export class L1Messenger extends EventTarget {
 
       try {
         const l0: L0Envelope = JSON.parse(new TextDecoder().decode(env.data))
+
+        // Deduplicate by nonce (first 24 bytes of ciphertext = 48 hex chars)
+        const msgId = l0.ciphertext.slice(0, 48)
+        if (seen.has(msgId)) {
+          console.debug('[L1] Group: Duplicate — discarded')
+          return
+        }
+        seen.add(msgId)
+        if (seen.size > MAX_SEEN) seen.delete(seen.values().next().value!)
+
         const { text, realSenderPk } = openGroupEnvelope(contentKey, l0)
 
         // Filter out own messages — already shown as 'out' when sent
