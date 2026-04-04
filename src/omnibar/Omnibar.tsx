@@ -176,7 +176,7 @@ export default function Omnibar() {
         const display = await resolveDisplayName(address, provider)
         setConnectedDisplay(display)
       } else {
-        setNftError(`No tienes el NFT de acceso para este grupo.`)
+        setNftError(`Your wallet doesn't hold a membership token for this group.`)
       }
     } catch (err) {
       setNftError(err instanceof Error ? err.message : 'Ownership check failed.')
@@ -232,13 +232,13 @@ export default function Omnibar() {
           setEnsDisplay(ensName)
           setConnectedDisplay(display)
         } else {
-          setEnsError(`Your wallet doesn't hold a token from ${name}.`)
+          setEnsError(`Your wallet doesn't hold a membership token for ${name}.`)
         }
       } else {
         // INDIVIDUAL ENS → EOA: not a group, no chat
         setEnsInfo(
-          `${ensName} es una dirección personal, no un grupo.\n` +
-          `Para acceder a un chat, usa el ENS de un grupo (p.ej. beachclaw.whispery.eth).`
+          `${ensName} is a personal address, not a group.\n` +
+          `To access a chat, use a group ENS name (e.g. beachclaw.whispery.eth).`
         )
       }
     } catch (err) {
@@ -256,7 +256,7 @@ export default function Omnibar() {
     kind === 'nft-address' ? 'NFT contract detected →' :
     kind === 'ens-name'    ? 'ENS name detected →' :
     kind === 'eoa-address' ? 'Wallet address detected →' :
-                             'Paste a Luma URL, NFT contract, or ENS name (alice.eth)…'
+                             'Paste an event URL, NFT contract, Agent Swarm…'
 
   const btnLabel =
     kind === 'classifying' ? 'Analysing…' :
@@ -342,7 +342,7 @@ export default function Omnibar() {
           &nbsp;·&nbsp;
           <span style={{ color: C.muted }}>0x51a5a1c7…</span>
           &nbsp;·&nbsp;
-          <span style={{ color: C.muted }}>alice.whispery.eth</span>
+          <span style={{ color: C.muted }}>beachclaw.whispery.eth</span>
         </div>
       )}
 
@@ -361,17 +361,16 @@ export default function Omnibar() {
           borderRadius: 10, color: C.muted, fontSize: 12,
           maxWidth: 600, width: '100%', lineHeight: 1.7,
         }}>
-          Esta app está diseñada para conversaciones grupales.<br />
-          Para acceder, usa la URL de un evento Luma, la dirección
-          de un contrato NFT o el nombre ENS de un grupo.
+          This app is designed for group conversations.<br />
+          To access a channel, paste a Luma event URL, an NFT contract address,
+          or a group ENS name.
         </div>
       )}
 
       {/* Unrecognised format */}
       {kind === 'unrecognised' && (
         <div style={{ ...mono, fontSize: 11, color: C.dim, marginTop: 14, textAlign: 'center' }}>
-          Formato no reconocido. Puedes pegar una URL de Luma,
-          una dirección de contrato o un nombre .eth.
+          Format not recognised. Try a Luma URL, a contract address, or a .eth name.
         </div>
       )}
 
@@ -383,9 +382,9 @@ export default function Omnibar() {
           borderRadius: 10, color: C.green, fontSize: 13,
           maxWidth: 600, width: '100%', textAlign: 'center',
         }}>
-          ✓ Token verificado —{' '}
+          ✓ Token verified —{' '}
           <strong>{connectedDisplayName ?? truncateAddress(value.trim())}</strong>
-          {' '}es miembro de <strong>{nftName}</strong>.
+          {' '}is a member of <strong>{nftName}</strong>.
           <br />
           <span style={{ color: C.muted, fontSize: 11 }}>
             {/* TODO: navigate to <MessengerView /> */}
@@ -412,7 +411,7 @@ export default function Omnibar() {
           maxWidth: 600, width: '100%', textAlign: 'center',
         }}>
           ✓ <strong>{connectedDisplayName ?? truncateAddress(value.trim())}</strong>
-          {' '}— acceso a <strong>{ensDisplayName}</strong> confirmado.
+          {' '}— access to <strong>{ensDisplayName}</strong> confirmed.
           <br />
           <span style={{ color: C.muted, fontSize: 11 }}>
             {/* TODO: navigate to <MessengerView /> */}
