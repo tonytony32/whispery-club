@@ -12,28 +12,19 @@ Admin: Alice (`DEPLOYER_ADDRESS`)
 
 | Role | Address |
 |---|---|
-| **Proxy** (use this) | `0x59804B5A7b61E469F148Dbd86eE95EEC3F6dc06a` |
-| Implementation v2 | `0x28a7923CC9dE33DA91cBe118d89024b032388971` |
-| Implementation v1 | `0x36d9CEf1cCde5A7A1BE4D0973B1fBd60420a1665` |
+| **Proxy** (use this) | `0x51a5a1c73280b7a15dFbD3b173cD178C8a824C16` |
+| Implementation | `0xBa8e267C1E21DC25bB0B5623Bc8B0eFb3209EFaa` |
 
-- Proxy on Etherscan: https://sepolia.etherscan.io/address/0x59804b5a7b61e469f148dbd86ee95eec3f6dc06a
-- Implementation v2 on Etherscan: https://sepolia.etherscan.io/address/0x28a7923cc9de33da91cbe118d89024b032388971
-
-### Token metadata (IPFS)
-
-| tokenId | Member | Metadata CID |
-|---|---|---|
-| 1 | Alice | `QmatzFmb6aPJU98wyomksxw6RdYdRr9r7HK7cC1xTDMau3` |
-| 2 | Bob | `QmbBWZdQ2CXgytW5YZdx9VSSCdQLLr4pEFB3XAtraUn1io` |
-| 3 | Charlie | `QmaUjsfrdXDsFDADp3YDoemUNHSgFfNozq5ki5EA43nYJt` |
+- Proxy on Etherscan: https://sepolia.etherscan.io/address/0x51a5a1c73280b7a15dfbd3b173cd178c8a824c16
+- Implementation on Etherscan: https://sepolia.etherscan.io/address/0xba8e267c1e21dc25bb0b5623bc8b0efb3209efaa
 
 ### Founding members
 
 | Member | Address | tokenId |
 |---|---|---|
 | Alice | `0x50b86669634641D9D9ecB2aaEdC18f5d2644f65c` | 1 |
-| Bob | `0xBF0c2136430053e6839113Abac2E55DBeB0E80a7` | 2 |
-| Charlie | `0x055476B69029367CF0E26eC784FB456Ed8ebcA00` | 3 |
+| Betty | `0xBF0c2136430053e6839113Abac2E55DBeB0E80a7` | 2 |
+| Caroline | `0x055476B69029367CF0E26eC784FB456Ed8ebcA00` | 3 |
 
 ---
 
@@ -43,14 +34,14 @@ Maps `channelId → eeePointer + swarmOverlay + epoch`. Write access gated by Wh
 
 | Role | Address |
 |---|---|
-| **Contract** | `0x227A6991c3702C227A1ea4beB867DF522183f5CC` |
-| NFT reference | `0x59804B5A7b61E469F148Dbd86eE95EEC3F6dc06a` (proxy above) |
+| **Contract** | `0x532434E21Cd2cE47e6e54bFd02070984d84f05d1` |
+| NFT reference | `0x51a5a1c73280b7a15dFbD3b173cD178C8a824C16` (proxy above) |
 
-- Contract on Etherscan: https://sepolia.etherscan.io/address/0x227a6991c3702c227a1ea4beb867df522183f5cc
+- Contract on Etherscan: https://sepolia.etherscan.io/address/0x532434e21cd2ce47e6e54bfd02070984d84f05d1
 
 ---
 
-## Why three contracts
+## Why two contracts (plus the proxy)
 
 The UUPS proxy pattern splits the NFT into two deployments:
 
@@ -71,6 +62,6 @@ address stays the same. The implementation address is an internal detail.
 ## .env reference
 
 ```
-NFT_PROXY=0x59804B5A7b61E469F148Dbd86eE95EEC3F6dc06a
-BACKPACK=0x227A6991c3702C227A1ea4beB867DF522183f5CC
+NFT_PROXY=0x51a5a1c73280b7a15dFbD3b173cD178C8a824C16
+BACKPACK=0x532434E21Cd2cE47e6e54bFd02070984d84f05d1
 ```

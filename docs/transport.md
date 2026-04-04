@@ -23,7 +23,7 @@ Imagine a postal system with no central post office. The postmen are thousands o
 You subscribe to your channel's topic. When someone sends a group message, they publish to that same topic. All members receive everything that arrives there and decide what to open.
 
 ```
-Alice                    Waku Network                  Bob + Charlie
+Alice                    Waku Network               Betty + Caroline
   │                                                           │
   │── publishes to channel topic ──→ /whispery/1/channel-0x{id[0:8]}/proto
   │                                               │           │
@@ -238,6 +238,9 @@ Member receives a message on the channel topic
   ├─ decode(payload) → { mac_hint, data }
   ├─ mac_hint == channelHint? → No  → "Group: Ignored by channel hint"
   │                           → Yes → JSON.parse(data) → L0 Envelope
+  ├─ dedup: msgId = l0.ciphertext[0:48] (24-byte nonce, unique per encrypt)
+  │   seen.has(msgId)? → Yes → "Duplicate — discarded"  (relay delivered N times)
+  │                   → No  → seen.add(msgId)
   ├─ openGroupEnvelope(content_key, l0)
   │     secretbox.open(ciphertext, nonce, content_key) → plain[150+]
   │     Stage 1 — SIWE:  ecrecover(siweSig, hash(siweMsg(ethAddr))) == ethAddr
@@ -246,7 +249,8 @@ Member receives a message on the channel topic
   │                       → mismatch → "falsificación de llaves detectada" (discard)
   │     Stage 3 — L0 sig: secp256k1.verify(signature, sha256(canonical), signingPk)
   │                       → fail → "firma inválida" (discard)
-  │     return plain[150:] as message text
+  │     return { text: plain[150:], realSenderPk }
+  ├─ realSenderPk == ownPubKey? → Yes → discard (own message, already shown as 'out')
   └─ emit 'message' event → { text, senderPk: realPk, timestamp } → UI
 ```
 
@@ -267,7 +271,8 @@ src/transport/
                           Group: publishGroup / subscribeGroup
                           Topic helpers: neighborhoodTopic / channelTopic
   node.ts               createWakuNode: lifecycle, defaultBootstrap, onStatus
-  useMessenger.ts       React hook: SIWE → two keys → fetch EEE → content_key → Waku
+  useMessenger.ts       React hook (MetaMask): SIWE → two keys → fetch EEE → content_key → Waku
+  useDemoMessenger.ts   React hook (demo key): createWallet → fetch EEE → content_key → Waku
   __tests__/
     hints.test.ts
     ecies.test.ts
@@ -328,4 +333,5 @@ To forge a valid message as Alice, an attacker needs Alice's Ethereum private ke
 
 - **Key registry on-chain**: the SIWE proof chain binds `ethAddress → keys` cryptographically, but `ethAddress` itself is self-declared inside the encrypted header. A Key Registry contract storing `(x25519PubKey, ethAddress)` on-chain would allow cross-referencing the declared identity against verified NFT membership.
 - **Store protocol**: messages sent while a peer is offline are lost. Waku has a Store protocol for retrieving message history.
-- **Key rotation**: if a user reinstalls MetaMask with the same seed phrase, they recover the same Ethereum keys → same SIWE signature → same Whispery keypair. Key rotation would require a versioned SIWE nonce or an explicit rotation mechanism.
+- **Epoch rotation UI**: the protocol supports key rotation (`rotateGroupChannel`) but the UI has no flow for it. When a member is added or removed, the admin must re-publish the EEE manually via the Live tab.
+- **Replay window enforcement**: the `timestamp` and `epoch` fields on every envelope allow detecting stale or replayed messages, but no enforcement window is implemented yet. A message from the past would pass all three validation stages.

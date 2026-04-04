@@ -65,7 +65,7 @@ When a member is burned (or a token is transferred away), the group admin detect
 1. Generate new `nacl.box.keyPair()` → new `pk_group`
 2. Generate new `content_key`
 3. Rebuild the EEE ACT for the current member set
-4. Upload new EEE to Swarm
+4. Upload new EEE to IPFS
 5. Call `WhisperyBackpack.setChannel(...)` with the new pointer and incremented epoch
 
 The contract knows nothing about keys. It only signals who is in the group.
@@ -140,9 +140,9 @@ This matches the `channel_id` field in the EEE. Any member can recompute it inde
 
 ```
                      ┌─────────────────────┐
-   Alice mints NFT   │   WhisperyNFT        │
-   Bob mints NFT     │   (ERC-721 proxy)    │
-   Charlie mints NFT │                     │
+   Alice mints NFT    │   WhisperyNFT        │
+   Betty mints NFT    │   (ERC-721 proxy)    │
+   Caroline mints NFT │                     │
                      │  isMember(addr) ─────┼──┐
                      └─────────────────────┘  │
                                               │ checked on every write
@@ -170,12 +170,12 @@ The contracts are the **discovery layer**. All confidentiality, authentication, 
 1. Deploy WhisperyNFT implementation
 2. Deploy ERC1967Proxy(implementation, initialize("Whispery Group Alpha", "WGALPHA", alice))
 3. nft.mint(alice)
-4. nft.mint(bob)
-5. nft.mint(charlie)
+4. nft.mint(betty)
+5. nft.mint(caroline)
 6. Deploy WhisperyBackpack(nft proxy address)
 7. Compute channelId = sha256("whispery/nft/1") off-chain
-8. Build EEE with ACT for [alice, bob, charlie], upload to Swarm → get hash
-9. backpack.setChannel(channelId, "bzz://...", swarmOverlay, epoch=0)
+8. Build EEE with ACT for [alice, betty, caroline], upload to IPFS → get CID
+9. backpack.setChannel(channelId, "ipfs://Qm...", swarmOverlay, epoch=0)
 ```
 
-From step 9 onwards, any client can call `backpack.getEEE(channelId)`, fetch the EEE from Swarm, and use their X25519 key to access the channel.
+From step 9 onwards, any client can call `backpack.getEEE(channelId)`, fetch the EEE from IPFS, and use their X25519 key to access the channel.
