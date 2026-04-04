@@ -19,7 +19,7 @@
 import { useState }                              from 'react'
 import { ethers }                                from 'ethers'
 import VerificationFlow                          from './VerificationFlow'
-import { resolveDisplayName, truncateAddress }   from './ensDisplay'
+import { resolveDisplayName, resolveENSName, truncateAddress } from './ensDisplay'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -147,9 +147,8 @@ export default function Omnibar() {
     setEnsError(null)
 
     try {
-      // Step 1 — forward resolve: ENS name → address (ENS lives on mainnet)
-      const mainnet  = new ethers.JsonRpcProvider('https://eth.llamarpc.com')
-      const resolved = await mainnet.resolveName(ensName)
+      // Step 1 — forward resolve: ENS name → address (tries multiple free RPCs)
+      const resolved = await resolveENSName(ensName)
 
       if (!resolved) {
         setEnsError(`ENS name "${ensName}" not found.`)

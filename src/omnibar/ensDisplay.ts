@@ -7,15 +7,31 @@ import { ethers } from 'ethers'
  */
 const ensCache = new Map<string, string>()
 
+/** Free public mainnet RPCs tried in order until one works */
+const MAINNET_RPCS = [
+  'https://rpc.ankr.com/eth',
+  'https://ethereum.publicnode.com',
+  'https://1rpc.io/eth',
+]
+
 export function truncateAddress(address: string): string {
   return address.slice(0, 6) + '…' + address.slice(-4)
+}
+
+async function mainnetProvider(): Promise<ethers.JsonRpcProvider> {
+  for (const url of MAINNET_RPCS) {
+    try {
+      const p = new ethers.JsonRpcProvider(url)
+      await p.getNetwork() // quick liveness check
+      return p
+    } catch { /* try next */ }
+  }
+  throw new Error('All mainnet RPCs unavailable')
 }
 
 /**
  * Reverse-resolves an address to its ENS name.
  * Falls back to truncated address on any failure or missing name.
- * ENS lives on mainnet — uses getDefaultProvider('mainnet') internally.
- * The provider param is accepted for API compat but not used for the lookup.
  */
 export async function resolveDisplayName(
   address: string,
@@ -23,14 +39,24 @@ export async function resolveDisplayName(
 ): Promise<string> {
   if (ensCache.has(address)) return ensCache.get(address)!
   try {
-    const mainnet = new ethers.JsonRpcProvider('https://eth.llamarpc.com')
-    const name    = await mainnet.lookupAddress(address)
-    const display = name ?? truncateAddress(address)
+    const provider = await mainnetProvider()
+    const name     = await provider.lookupAddress(address)
+    const display  = name ?? truncateAddress(address)
     ensCache.set(address, display)
     return display
   } catch {
     const display = truncateAddress(address)
     ensCache.set(address, display)
     return display
+  }
+}
+
+/** Forward-resolves an ENS name to an address. Returns null if not found. */
+export async function resolveENSName(name: string): Promise<string | null> {
+  try {
+    const provider = await mainnetProvider()
+    return await provider.resolveName(name)
+  } catch {
+    return null
   }
 }
