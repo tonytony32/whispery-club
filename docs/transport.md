@@ -129,11 +129,13 @@ The L0 Envelope (inside):
   version:    1
   channel_id: string    // which channel this belongs to
   epoch:      number    // key rotation epoch
-  sender_pk:  string    // sender's X25519 public key
-  ciphertext: string    // message encrypted with the channel/session key
+  sender_pk:  string    // group: 32 random bytes (Zero Metadata — real identity inside ciphertext)
+                        // P2P:   real X25519 public key of the sender
+  ciphertext: string    // group: nonce[24] || secretbox(identity_header[150] || msg, content_key)
+                        // P2P:   ECIES-encrypted L0 Envelope
   mac_hint:   string    // first 4 bytes of nonce (L0 routing hint)
   timestamp:  number    // unix ms — stamped at send time
-  signature:  string    // secp256k1 — non-repudiation
+  signature:  string    // secp256k1 over canonical outer fields — non-repudiation
 }
 ```
 
@@ -309,7 +311,7 @@ Stage 1 — SIWE identity
 
 Stage 2 — Key derivation
   seed = sha256(siweSignature)
-  sha256(seed) → nacl.box.keyPair → compare with real_sender_pk
+  nacl.box.keyPair(seed) → x25519 pubkey → compare with real_sender_pk
   HKDF(seed, "whispery/signing/v1") → secp256k1 pubkey → compare with signing_pub_key
   → mismatch → throw "falsificación de llaves detectada"
 
