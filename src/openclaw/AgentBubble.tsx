@@ -46,7 +46,7 @@ export default function AgentBubble({ msg, depth }: Props) {
           color: '#fcd34d', fontWeight: 700,
           ...mono, fontSize: 12,
         }}>
-          <span style={{ color: '#fbbf24', marginRight: 8 }}>⚡ DIRECTIVA</span>
+          <span style={{ color: '#fbbf24', marginRight: 8 }}>⚡ DIRECTIVE</span>
           {msg.content}
           <BubbleFooter msg={msg} c={c} />
         </div>
@@ -70,7 +70,7 @@ export default function AgentBubble({ msg, depth }: Props) {
         >
           <span style={{ marginRight: 6, fontSize: 12 }}>💭</span>
           <span style={{ color: c.text, fontWeight: 600, fontStyle: 'normal' }}>
-            Pensamiento interno
+            Internal thought
           </span>
           {' '}
           <span style={{ fontSize: 10, color: '#475569' }}>

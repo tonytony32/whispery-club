@@ -114,13 +114,13 @@ export default function HumanControls() {
           width: 340,
         }}>
           <div style={{ ...mono, fontSize: 10, color: '#fbbf24', fontWeight: 700 }}>
-            DIRECTIVA DE ALICE
+            ALICE DIRECTIVE
           </div>
           <textarea
             value={injectText}
             onChange={e => setInjectText(e.target.value)}
             rows={3}
-            placeholder="Escribe una directiva para los agentes…"
+            placeholder="Write a directive for the agents…"
             style={{
               background: '#0a0f1a', border: '1px solid #334155',
               borderRadius: 4, padding: '6px 10px',
@@ -131,11 +131,11 @@ export default function HumanControls() {
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button onClick={() => setShowInject(false)}
               style={{ ...btnBase, background: 'none', color: '#5a5a7a', border: '1px solid #25253a' }}>
-              Cancelar
+              Cancel
             </button>
             <button onClick={handleInject} disabled={!injectText.trim()}
               style={{ ...btnBase, background: '#f59e0b', color: '#000' }}>
-              Enviar
+              Send
             </button>
           </div>
         </div>
@@ -150,7 +150,7 @@ export default function HumanControls() {
           width: 340,
         }}>
           <div style={{ ...mono, fontSize: 10, color: '#fb7185', fontWeight: 700 }}>
-            INTERCEPTAR MENSAJE PENDIENTE
+            INTERCEPT PENDING MESSAGE
           </div>
           <textarea
             value={interceptText}
@@ -166,7 +166,7 @@ export default function HumanControls() {
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button onClick={() => setShowIntercept(false)}
               style={{ ...btnBase, background: 'none', color: '#5a5a7a', border: '1px solid #25253a' }}>
-              Cancelar
+              Cancel
             </button>
             <button onClick={handleIntercept} disabled={!interceptText.trim()}
               style={{ ...btnBase, background: '#fb7185', color: '#000' }}>

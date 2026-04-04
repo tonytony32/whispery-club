@@ -34,7 +34,7 @@ export default function ThoughtStream() {
         <span style={{ color: c.border, fontWeight: 700, fontStyle: 'normal' }}>
           {ts.agentId}.whispery.eth
         </span>
-        {' '}está pensando:{' '}
+        {' '}is thinking:{' '}
         {ts.text}
         <span style={{
           display: 'inline-block', width: 8, height: 14,

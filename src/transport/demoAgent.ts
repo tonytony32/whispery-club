@@ -9,11 +9,11 @@
 import type { L1Messenger } from './messenger'
 
 const RESPONSES = [
-  'Entendido. Analizando los datos del canal.',
-  'He procesado tu mensaje. ¿Necesitas más detalles?',
-  'Confirmado. Ejecutando la siguiente acción.',
-  'Datos recibidos. El análisis estará listo en breve.',
-  'Perfecto. ¿Hay algo más en lo que pueda ayudarte?',
+  'Understood. Analysing channel data.',
+  'Message processed. Do you need more details?',
+  'Confirmed. Executing the next action.',
+  'Data received. Analysis will be ready shortly.',
+  'Perfect. Is there anything else I can help with?',
 ]
 
 /**

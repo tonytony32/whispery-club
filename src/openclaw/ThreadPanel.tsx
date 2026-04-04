@@ -2,7 +2,7 @@
  * ThreadPanel — tree-structured thread view + thought drawer + HitL toolbar.
  *
  * Renders messages in a tree using parentId references.
- * Max visual depth: 4 — beyond that collapses to "[ver subárbol]".
+ * Max visual depth: 4 — beyond that collapses to "[view subtree]".
  */
 
 import { useRef, useEffect, useState } from 'react'
@@ -54,7 +54,7 @@ function renderTree(nodes: TreeNode[]): React.ReactNode[] {
           fontFamily: '"IBM Plex Mono", monospace',
           marginBottom: 6, cursor: 'default',
         }}>
-          [ver subárbol — {countDescendants(node)} mensajes]
+          [view subtree — {countDescendants(node)} messages]
         </div>
       )
       return
@@ -114,7 +114,7 @@ export default function ThreadPanel() {
             fontFamily: '"IBM Plex Mono", monospace',
             margin: '40px auto', textAlign: 'center',
           }}>
-            Esperando agentes…
+            Waiting for agents…
           </div>
         ) : nodes}
         <div ref={bottomRef} />
