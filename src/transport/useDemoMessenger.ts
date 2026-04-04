@@ -79,14 +79,11 @@ export function useDemoMessenger(
     await messenger.subscribeGroup(channelIdRef.current!, contentKeyRef.current!)
     log('Subscribed ✓')
 
-    // In demo mode, start Betty's auto-responder
+    // In demo mode, start Betty's auto-responder.
+    // Pass `send` (not publishGroup directly) so replies appear as 'out'
+    // in Betty's panel — Alice sees 'in', Betty sees 'out', flow is visible.
     if (DEMO_MODE) {
-      agentCleanup.current = startDemoAgent(
-        messenger,
-        contentKeyRef.current!,
-        channelIdRef.current!,
-        epochRef.current,
-      )
+      agentCleanup.current = startDemoAgent(messenger, send)
       log('Demo agent active — Betty will respond automatically')
     }
   }

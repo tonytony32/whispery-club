@@ -16,11 +16,14 @@ const RESPONSES = [
   'Perfecto. ¿Hay algo más en lo que pueda ayudarte?',
 ]
 
+/**
+ * @param messenger  Betty's L1Messenger — used only to listen for incoming messages.
+ * @param send       Betty's hook send() — publishes AND records the reply as 'out'
+ *                   in Betty's panel, so the flow is visible on both sides.
+ */
 export function startDemoAgent(
   messenger: L1Messenger,
-  contentKey: Uint8Array,
-  channelId: string,
-  epoch: number,
+  send: (text: string) => Promise<void>,
 ): () => void {
   let index = 0
 
@@ -35,7 +38,7 @@ export function startDemoAgent(
     const delay = 800 + Math.random() * 1200
     setTimeout(async () => {
       try {
-        await messenger.publishGroup(contentKey, channelId, epoch, reply)
+        await send(reply)
       } catch {
         // Demo — swallow send errors silently
       }
