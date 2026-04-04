@@ -50,6 +50,8 @@ export const BACK_ABI = [
   },
 ] as const
 
+export const GROUP_NAME = 'BEACH AT CANNES'
+
 // tokenId → member name (matches mint order in Deploy.s.sol)
 export const TOKEN_NAMES: Record<number, string> = {
   1: 'Alice',

@@ -3,7 +3,7 @@ import { useAccount, useReadContract } from 'wagmi'
 import { bytesToHex } from '@noble/hashes/utils'
 import { useMessenger, type UseMessengerResult, type ChatMessage } from './transport/useMessenger'
 import { useDemoMessenger } from './transport/useDemoMessenger'
-import { BACK_ADDRESS, BACK_ABI, CHANNEL_ID } from './contracts'
+import { BACK_ADDRESS, BACK_ABI, CHANNEL_ID, GROUP_NAME } from './contracts'
 import { DEMO_PRIVATE_KEYS } from './core/crypto'
 import type { NodeStatus } from './transport/node'
 
@@ -140,7 +140,8 @@ function ParticipantPanel({
 
         {connected &&
           <div style={{ ...mono, fontSize: 10, color: C.muted }}>
-            epoch {String(eeeEpoch)} · group channel
+            <span style={{ color: accent, fontWeight: 700 }}>{GROUP_NAME}</span>
+            {' · '}epoch {String(eeeEpoch)}
           </div>
         }
         {status === 'disconnected' &&
@@ -196,7 +197,7 @@ function ParticipantPanel({
       }}>
         {messages.length === 0
           ? <span style={{ ...mono, color: C.dim, fontSize: 11, margin: 'auto' }}>No messages yet</span>
-          : messages.map((msg: ChatMessage, i: number) => (
+          : [...messages].sort((a, b) => a.at - b.at).map((msg: ChatMessage, i: number) => (
             <div key={i} style={{
               display: 'flex',
               justifyContent: msg.direction === 'out' ? 'flex-end' : 'flex-start',

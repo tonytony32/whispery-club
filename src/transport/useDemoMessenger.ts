@@ -61,8 +61,8 @@ export function useDemoMessenger(
     messengerRef.current = messenger
 
     messenger.addEventListener('message', (e) => {
-      const { text } = (e as CustomEvent<{ text: string }>).detail
-      setMessages(prev => [...prev, { text, direction: 'in', at: Date.now() }])
+      const { text, timestamp } = (e as CustomEvent<{ text: string; timestamp: number }>).detail
+      setMessages(prev => [...prev, { text, direction: 'in', at: timestamp ?? Date.now() }])
     })
 
     const topic = channelTopic(channelIdRef.current!)
