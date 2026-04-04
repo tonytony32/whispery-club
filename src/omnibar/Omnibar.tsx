@@ -220,11 +220,20 @@ export default function Omnibar() {
       }
 
       if (isContract) {
-        // GROUP flow: ENS → NFT contract → check connected wallet's balance
-        const nft     = new ethers.Contract(resolved, ERC721_ABI, provider)
-        const balance = await nft.balanceOf(connectedAddr)
-        let   name    = ensName
-        try { name = await nft.name() } catch { /* optional */ }
+        // GROUP flow: ENS → NFT contract → check connected wallet's balance.
+        // balanceOf must use a Sepolia RPC — the BrowserProvider follows MetaMask's
+        // current network (mainnet for ENS), but the NFT contract lives on Sepolia.
+        let balance = 0n
+        let name    = ensName
+        for (const url of SEPOLIA_RPCS) {
+          try {
+            const sepoliaRpc = new ethers.JsonRpcProvider(url, SEPOLIA_NET, { staticNetwork: SEPOLIA_NET })
+            const nft = new ethers.Contract(resolved, ERC721_ABI, sepoliaRpc)
+            balance = await nft.balanceOf(connectedAddr)
+            try { name = await nft.name() } catch { /* optional */ }
+            break
+          } catch { /* try next RPC */ }
+        }
 
         if (balance > 0n) {
           const display = await resolveDisplayName(connectedAddr, provider)
