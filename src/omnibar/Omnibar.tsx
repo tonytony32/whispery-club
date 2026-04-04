@@ -36,6 +36,11 @@ const SEPOLIA_RPCS = [
   'https://ethereum-sepolia.publicnode.com',
 ]
 
+const SEPOLIA_NET = ethers.Network.from(11155111)
+function sepoliaProvider(url: string) {
+  return new ethers.JsonRpcProvider(url, SEPOLIA_NET, { staticNetwork: SEPOLIA_NET })
+}
+
 // ── Colour palette ────────────────────────────────────────────────────────────
 const C = {
   bg:      '#0b0b0e',
@@ -75,15 +80,12 @@ function syncClassify(v: string): InputKind {
 }
 
 async function asyncClassifyAddress(address: string): Promise<'nft-address' | 'eoa-address'> {
-  // Try eth_getCode via public Sepolia RPCs
   for (const url of SEPOLIA_RPCS) {
     try {
-      const provider = new ethers.JsonRpcProvider(url)
-      const code = await provider.getCode(address)
+      const code = await sepoliaProvider(url).getCode(address)
       return code !== '0x' ? 'nft-address' : 'eoa-address'
     } catch { /* try next */ }
   }
-  // If all RPCs fail, fall back to assuming contract (better demo UX)
   return 'nft-address'
 }
 
@@ -212,19 +214,27 @@ export default function Omnibar() {
       let isContract = false
       for (const url of SEPOLIA_RPCS) {
         try {
-          const rpc  = new ethers.JsonRpcProvider(url)
-          const code = await rpc.getCode(resolved)
-          isContract = code !== '0x'
+          isContract = (await sepoliaProvider(url).getCode(resolved)) !== '0x'
           break
         } catch { /* try next */ }
       }
 
       if (isContract) {
-        // GROUP flow: ENS → NFT contract → check connected wallet's balance
-        const nft     = new ethers.Contract(resolved, ERC721_ABI, provider)
-        const balance = await nft.balanceOf(connectedAddr)
-        let   name    = ensName
-        try { name = await nft.name() } catch { /* optional */ }
+        // GROUP flow: ENS → NFT contract on Sepolia → check connected wallet's balance.
+        // Must use a Sepolia RPC here — BrowserProvider follows MetaMask's network
+        // and would call balanceOf against mainnet where the contract doesn't exist,
+        // returning 0x and causing ethers BAD_DATA.
+        let balance = 0n
+        let name    = ensName
+        for (const url of SEPOLIA_RPCS) {
+          try {
+            const rpc = sepoliaProvider(url)
+            const nft = new ethers.Contract(resolved, ERC721_ABI, rpc)
+            balance   = await nft.balanceOf(connectedAddr)
+            try { name = await nft.name() } catch { /* optional */ }
+            break
+          } catch { /* try next */ }
+        }
 
         if (balance > 0n) {
           const display = await resolveDisplayName(connectedAddr, provider)
