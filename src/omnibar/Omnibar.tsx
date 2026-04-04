@@ -205,26 +205,53 @@ export default function Omnibar() {
       const provider      = new ethers.BrowserProvider(eth)
       await provider.send('eth_requestAccounts', [])
       const signer        = await provider.getSigner()
-      const connectedAddr = (await signer.getAddress()).toLowerCase()
+      const connectedAddr = await signer.getAddress()
 
-      // Verify the connected wallet IS the ENS name owner
-      if (connectedAddr !== resolved.toLowerCase()) {
-        setEnsError(
-          `This ENS name resolves to a different wallet.\n` +
-          `Connected: ${truncateAddress(connectedAddr)} · ` +
-          `Expected: ${truncateAddress(resolved)}`
-        )
-        return
+      // Determine if ENS resolves to a contract (group) or an EOA (individual)
+      let isContract = false
+      for (const url of SEPOLIA_RPCS) {
+        try {
+          const rpc  = new ethers.JsonRpcProvider(url)
+          const code = await rpc.getCode(resolved)
+          isContract = code !== '0x'
+          break
+        } catch { /* try next */ }
       }
 
-      const nft     = new ethers.Contract(WHISPERY_NFT_ADDRESS, ERC721_ABI, provider)
-      const balance = await nft.balanceOf(resolved)
+      if (isContract) {
+        // GROUP flow: ENS → NFT contract → check connected wallet's balance
+        const nft     = new ethers.Contract(resolved, ERC721_ABI, provider)
+        const balance = await nft.balanceOf(connectedAddr)
+        let   name    = ensName
+        try { name = await nft.name() } catch { /* optional */ }
 
-      if (balance > 0n) {
-        setEnsGranted(true)
-        setEnsDisplay(ensName)
+        if (balance > 0n) {
+          const display = await resolveDisplayName(connectedAddr, provider)
+          setEnsGranted(true)
+          setEnsDisplay(ensName)
+          setConnectedDisplay(display)
+        } else {
+          setEnsError(`Your wallet doesn't hold a token from ${name}.`)
+        }
       } else {
-        setEnsError(`${ensName} doesn't hold a membership token.`)
+        // INDIVIDUAL flow: ENS → personal wallet → verify connected wallet matches
+        if (connectedAddr.toLowerCase() !== resolved.toLowerCase()) {
+          setEnsError(
+            `This ENS name resolves to a different wallet.\n` +
+            `Connected: ${truncateAddress(connectedAddr)} · ` +
+            `Expected: ${truncateAddress(resolved)}`
+          )
+          return
+        }
+        const nft     = new ethers.Contract(WHISPERY_NFT_ADDRESS, ERC721_ABI, provider)
+        const balance = await nft.balanceOf(resolved)
+        if (balance > 0n) {
+          setEnsGranted(true)
+          setEnsDisplay(ensName)
+          setConnectedDisplay(ensName)
+        } else {
+          setEnsError(`${ensName} doesn't hold a membership token.`)
+        }
       }
     } catch (err) {
       setEnsError(err instanceof Error ? err.message : 'ENS resolution failed.')
@@ -396,11 +423,12 @@ export default function Omnibar() {
           borderRadius: 10, color: C.green, fontSize: 13,
           maxWidth: 600, width: '100%', textAlign: 'center',
         }}>
-          ✓ <strong>{ensDisplayName}</strong> — membership confirmed.
+          ✓ <strong>{connectedDisplayName ?? truncateAddress(value.trim())}</strong>
+          {' '}— acceso a <strong>{ensDisplayName}</strong> confirmado.
           <br />
           <span style={{ color: C.muted, fontSize: 11 }}>
-            {/* TODO: navigate to <MessengerView /> passing ensDisplayName as identity */}
-            Opening chat as {ensDisplayName}…
+            {/* TODO: navigate to <MessengerView /> */}
+            Opening chat…
           </span>
         </div>
       )}
