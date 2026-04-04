@@ -7,12 +7,14 @@ import { ethers } from 'ethers'
  */
 const ensCache = new Map<string, string>()
 
-/** Free public mainnet RPCs tried in order until one works */
+/** Mainnet RPCs tried in order until one works.
+ *  VITE_ENS_RPC_URL (e.g. Alchemy) goes first if set. */
 const MAINNET_RPCS = [
+  import.meta.env.VITE_ENS_RPC_URL,
   'https://rpc.ankr.com/eth',
   'https://ethereum.publicnode.com',
   'https://1rpc.io/eth',
-]
+].filter(Boolean) as string[]
 
 export function truncateAddress(address: string): string {
   return address.slice(0, 6) + '…' + address.slice(-4)
