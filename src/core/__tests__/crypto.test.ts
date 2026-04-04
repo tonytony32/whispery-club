@@ -103,7 +103,7 @@ describe('openGroupEnvelope — round-trip', () => {
     const ckBob = accessGroupChannel(walletBob, eee)!
 
     const env  = createGroupEnvelope(walletAlice, content_key, eee.channel_id, 'hola grupo', eee.epoch)
-    const text = openGroupEnvelope(ckBob, env)
+    const { text } = openGroupEnvelope(ckBob, env)
 
     expect(text).toBe('hola grupo')
   })
@@ -116,9 +116,9 @@ describe('openGroupEnvelope — round-trip', () => {
 
     const env = createGroupEnvelope(walletBob, content_key, eee.channel_id, 'broadcast', eee.epoch)
 
-    expect(openGroupEnvelope(ckAlice, env)).toBe('broadcast')
-    expect(openGroupEnvelope(ckBob, env)).toBe('broadcast')
-    expect(openGroupEnvelope(ckCharlie, env)).toBe('broadcast')
+    expect(openGroupEnvelope(ckAlice, env).text).toBe('broadcast')
+    expect(openGroupEnvelope(ckBob, env).text).toBe('broadcast')
+    expect(openGroupEnvelope(ckCharlie, env).text).toBe('broadcast')
   })
 })
 
@@ -170,7 +170,7 @@ describe('createGroupEnvelope — Zero Metadata', () => {
     const aliceCk = accessGroupChannel(walletAlice, eee)!
     const env = createGroupEnvelope(walletAlice, content_key, eee.channel_id, 'self', eee.epoch)
     // Alice can decrypt her own message → keys are self-consistent
-    expect(openGroupEnvelope(aliceCk, env)).toBe('self')
+    expect(openGroupEnvelope(aliceCk, env).text).toBe('self')
   })
 })
 

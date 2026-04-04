@@ -521,7 +521,10 @@ export function createGroupEnvelope(
  *
  * Cualquier fallo lanza un error explícito y descarta el mensaje.
  */
-export function openGroupEnvelope(content_key: Uint8Array, envelope: Envelope): string {
+export function openGroupEnvelope(
+  content_key: Uint8Array,
+  envelope: Envelope,
+): { text: string; realSenderPk: Uint8Array } {
   // ── Capa 3: descifrar ─────────────────────────────────────────────────────
   const raw   = fromHex(envelope.ciphertext)
   const nonce = raw.slice(0, nacl.secretbox.nonceLength)
@@ -555,7 +558,7 @@ export function openGroupEnvelope(content_key: Uint8Array, envelope: Envelope): 
     throw new Error('firma inválida — posible impersonación o payload alterado')
   }
 
-  return dec.decode(msgBytes)
+  return { text: dec.decode(msgBytes), realSenderPk }
 }
 
 // ─── Rotación de Claves — Reto 3 ─────────────────────────────────────────────
@@ -646,7 +649,7 @@ function runDemo() {
 
   // Wallet C lo descifra
   const ckC = accessGroupChannel(walletC, eee)
-  console.log(`\nWallet C (autorizada) descifra: "${openGroupEnvelope(ckC!, envB)}"`)
+  console.log(`\nWallet C (autorizada) descifra: "${openGroupEnvelope(ckC!, envB).text}"`)
 
   // Wallet D intenta acceder
   const ckD = accessGroupChannel(walletD, eee)

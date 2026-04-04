@@ -8,20 +8,19 @@ import { DEMO_PRIVATE_KEYS } from './core/crypto'
 import type { NodeStatus } from './transport/node'
 
 const C = {
-  bg:      '#0b0b0e',
-  surface: '#13131a',
-  raised:  '#1a1a24',
-  border:  '#25253a',
-  text:    '#ddddf0',
-  muted:   '#5a5a7a',
-  dim:     '#3a3a55',
-  accent:  '#7c6aff',
-  green:   '#3ddc97',
-  red:     '#ff5a5a',
-  yellow:  '#ffc83d',
-  blue:    '#5ab4ff',
-  orange:  '#ff9a3d',
-  logBg:   '#080c08',
+  bg:        '#0b0b0e',
+  surface:   '#13131a',
+  raised:    '#1a1a24',
+  border:    '#25253a',
+  text:      '#ddddf0',
+  muted:     '#5a5a7a',
+  dim:       '#3a3a55',
+  accent:    '#7c6aff',
+  green:     '#3ddc97',
+  red:       '#ff5a5a',
+  yellow:    '#ffc83d',
+  orange:    '#ff9a3d',
+  logBg:     '#080c08',
   logBorder: '#1a2a1a',
 }
 
@@ -35,23 +34,75 @@ const mono: React.CSSProperties = {
 function StatusBadge({ status, signing }: { status: NodeStatus; signing: boolean }) {
   const s = signing ? 'signing' : status
   const [color, label] =
-    s === 'connected'  ? [C.green,  '● connected']   :
-    s === 'signing'    ? [C.yellow, '◌ signing…']    :
-    s === 'connecting' ? [C.yellow, '◌ connecting…'] :
-    s === 'error'      ? [C.red,    '✗ error']       :
-                         [C.muted,  '○ idle']
+    s === 'connected'     ? [C.green,  '● connected']      :
+    s === 'signing'       ? [C.yellow, '◌ signing…']       :
+    s === 'connecting'    ? [C.yellow, '◌ connecting…']    :
+    s === 'disconnected'  ? [C.orange, '⚡ disconnected']   :
+    s === 'error'         ? [C.red,    '✗ error']          :
+                            [C.muted,  '○ idle']
   return <span style={{ ...mono, fontSize: 11, color, fontWeight: 700 }}>{label}</span>
 }
 
-// ── Participant panel ─────────────────────────────────────────────────────────
+// ── Log panel ─────────────────────────────────────────────────────────────────
 
-function MessengerPanel({
+function LogPanel({ logs, accentColor }: { logs: string[]; accentColor: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => { ref.current?.scrollTo(0, ref.current.scrollHeight) }, [logs])
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        background: C.logBg,
+        border: `1px solid ${C.logBorder}`,
+        borderRadius: 8,
+        padding: '10px 14px',
+        height: 160,
+        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 1,
+      }}
+    >
+      <div style={{ ...mono, fontSize: 10, fontWeight: 700, letterSpacing: 1.2,
+        textTransform: 'uppercase', color: accentColor + '50', marginBottom: 5 }}>
+        log
+      </div>
+      {logs.length === 0 ? (
+        <span style={{ ...mono, fontSize: 11, color: '#2a3a2a' }}>— waiting —</span>
+      ) : (
+        logs.map((entry, i) => {
+          const color =
+            entry.includes('✓')                           ? '#3d7a4d' :
+            entry.includes('failed') || entry.includes('error') ||
+            entry.includes('Error')  || entry.includes('lost')  ? '#7a3a3a' :
+            entry.includes('peer:connect ')               ? '#3a5a7a' :
+            entry.includes('peer:disconnect')             ? '#5a4a2a' :
+                                                            '#2d4a3a'
+          return (
+            <div key={i} style={{
+              ...mono, fontSize: 11, color, lineHeight: 1.5,
+              whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+            }}>
+              {entry}
+            </div>
+          )
+        })
+      )}
+    </div>
+  )
+}
+
+// ── Shared participant view ───────────────────────────────────────────────────
+
+function ParticipantView({
   label,
   accentColor,
   isDemo,
   pointer,
   eeeEpoch,
   result,
+  logs,
 }: {
   label: string
   accentColor: string
@@ -59,6 +110,7 @@ function MessengerPanel({
   pointer: string | undefined
   eeeEpoch: bigint
   result: UseMessengerResult
+  logs: string[]
 }) {
   const { status, signing, myPubKey, messages, connect, send, signError } = result
   const [draft, setDraft]         = useState('')
@@ -74,15 +126,13 @@ function MessengerPanel({
     if (!draft.trim()) return
     setSending(true)
     setSendError(null)
-    try {
-      await send(draft.trim())
-      setDraft('')
-    } catch (e) {
-      setSendError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSending(false)
-    }
+    try { await send(draft.trim()); setDraft('') }
+    catch (e) { setSendError(e instanceof Error ? e.message : String(e)) }
+    finally { setSending(false) }
   }
+
+  const connected = status === 'connected'
+  const canSend   = connected && !!draft.trim() && !sending
 
   const card: React.CSSProperties = {
     background: C.raised,
@@ -91,26 +141,25 @@ function MessengerPanel({
     padding: '16px 20px',
   }
 
-  const canSend = status === 'connected' && draft.trim() && !sending
-
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1, minWidth: 0 }}>
+    <div style={{
+      maxWidth: 680, margin: '0 auto', padding: '24px 32px',
+      display: 'flex', flexDirection: 'column', gap: 14,
+    }}>
 
       {/* Header */}
       <div style={{
         ...card,
-        borderColor: status === 'connected' ? accentColor + '60' : C.border,
-        padding: '14px 18px',
+        borderColor: status === 'connected'     ? accentColor + '60' :
+                     status === 'disconnected'  ? C.orange + '60'    : C.border,
       }}>
         <div style={{ display: 'flex', alignItems: 'center',
-          justifyContent: 'space-between', marginBottom: status === 'idle' && pointer ? 10 : 0 }}>
+          justifyContent: 'space-between', marginBottom: 6 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{
-              ...mono, fontSize: 13, fontWeight: 700, color: accentColor,
-            }}>
+            <span style={{ ...mono, fontSize: 14, fontWeight: 700, color: accentColor }}>
               {label}
             </span>
-            {status === 'connected' && myPubKey && (
+            {connected && myPubKey && (
               <span style={{ ...mono, fontSize: 10, color: C.muted }}>
                 0x{bytesToHex(myPubKey.slice(0, 4))}…
               </span>
@@ -119,43 +168,47 @@ function MessengerPanel({
           <StatusBadge status={status} signing={signing} />
         </div>
 
-        {status === 'connected' && (
-          <span style={{ ...mono, color: C.muted, fontSize: 10 }}>
+        {connected && (
+          <span style={{ ...mono, fontSize: 11, color: C.muted }}>
             epoch {String(eeeEpoch)} · group channel
           </span>
         )}
 
+        {status === 'disconnected' && (
+          <span style={{ ...mono, fontSize: 11, color: C.orange }}>
+            All Waku peers dropped. Messages cannot be sent until reconnected.
+          </span>
+        )}
+
         {!pointer && (
-          <span style={{ ...mono, color: C.yellow, fontSize: 11 }}>
+          <span style={{ ...mono, fontSize: 11, color: C.yellow }}>
             EEE not published — go to Live tab first.
           </span>
         )}
 
         {signing && (
-          <span style={{ ...mono, color: C.yellow, fontSize: 11 }}>
+          <span style={{ ...mono, fontSize: 11, color: C.yellow }}>
             Check MetaMask — sign the SIWE message…
           </span>
         )}
         {status === 'connecting' && !signing && (
-          <span style={{ ...mono, color: C.yellow, fontSize: 11 }}>
-            Joining Waku…
-          </span>
+          <span style={{ ...mono, fontSize: 11, color: C.yellow }}>Joining Waku…</span>
         )}
         {status === 'error' && (
-          <span style={{ ...mono, color: C.red, fontSize: 11 }}>
+          <span style={{ ...mono, fontSize: 11, color: C.red }}>
             Connection failed — see log below.
           </span>
         )}
         {signError && (
-          <span style={{ ...mono, color: C.red, fontSize: 11 }}>{signError}</span>
+          <span style={{ ...mono, fontSize: 11, color: C.red }}>{signError}</span>
         )}
 
         {!isDemo && !signing && status === 'idle' && pointer && (
           <button
             onClick={connect}
             style={{
-              background: accentColor, color: '#fff', border: 'none',
-              borderRadius: 6, padding: '8px 16px',
+              marginTop: 10, background: accentColor, color: '#fff',
+              border: 'none', borderRadius: 6, padding: '9px 20px',
               ...mono, fontWeight: 700, cursor: 'pointer',
             }}
           >
@@ -170,13 +223,12 @@ function MessengerPanel({
         style={{
           ...card,
           flex: 1,
-          minHeight: 260,
-          maxHeight: 360,
+          height: 360,
           overflowY: 'auto',
           display: 'flex',
           flexDirection: 'column',
           gap: 8,
-          padding: '12px 16px',
+          padding: '14px 18px',
         }}
       >
         {messages.length === 0 ? (
@@ -193,11 +245,8 @@ function MessengerPanel({
                 background: msg.direction === 'out' ? accentColor : C.surface,
                 color: C.text,
                 border: `1px solid ${msg.direction === 'out' ? accentColor : C.border}`,
-                borderRadius: 8,
-                padding: '6px 10px',
-                maxWidth: '85%',
-                wordBreak: 'break-word',
-                ...mono,
+                borderRadius: 8, padding: '7px 12px',
+                maxWidth: '80%', wordBreak: 'break-word', ...mono,
               }}>
                 <div style={{ fontSize: 10, marginBottom: 3,
                   color: msg.direction === 'out' ? 'rgba(255,255,255,0.5)' : C.muted }}>
@@ -217,12 +266,12 @@ function MessengerPanel({
             value={draft}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSend()}
-            placeholder={status === 'connected' ? 'Type a message…' : 'Not connected…'}
-            disabled={status !== 'connected'}
+            placeholder={connected ? 'Type a message…' : 'Not connected…'}
+            disabled={!connected}
             style={{
               flex: 1, background: C.surface, border: `1px solid ${C.border}`,
               borderRadius: 6, padding: '8px 12px', color: C.text,
-              ...mono, outline: 'none', opacity: status !== 'connected' ? 0.35 : 1,
+              ...mono, outline: 'none', opacity: connected ? 1 : 0.35,
             }}
           />
           <button
@@ -231,7 +280,7 @@ function MessengerPanel({
             style={{
               background: canSend ? accentColor : C.dim,
               color: '#fff', border: 'none', borderRadius: 6,
-              padding: '8px 14px', ...mono, fontWeight: 700,
+              padding: '8px 16px', ...mono, fontWeight: 700,
               cursor: canSend ? 'pointer' : 'default',
             }}
           >
@@ -244,116 +293,66 @@ function MessengerPanel({
           </span>
         )}
       </div>
+
+      {/* Log */}
+      <LogPanel logs={logs} accentColor={accentColor} />
     </div>
   )
 }
 
-// ── Log panel ─────────────────────────────────────────────────────────────────
+// ── Alice (MetaMask) ──────────────────────────────────────────────────────────
 
-function LogPanel({ logs }: { logs: string[] }) {
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    ref.current?.scrollTo(0, ref.current.scrollHeight)
-  }, [logs])
-
-  return (
-    <div style={{
-      background: C.logBg,
-      border: `1px solid ${C.logBorder}`,
-      borderRadius: 8,
-      padding: '10px 14px',
-      height: 180,
-      overflowY: 'auto',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 2,
-    }}
-      ref={ref}
-    >
-      <div style={{ ...mono, fontSize: 10, fontWeight: 700, letterSpacing: 1.2,
-        textTransform: 'uppercase', color: '#2a4a2a', marginBottom: 6 }}>
-        log
-      </div>
-      {logs.length === 0 ? (
-        <span style={{ ...mono, fontSize: 11, color: '#2a3a2a' }}>
-          — waiting for activity —
-        </span>
-      ) : (
-        logs.map((entry, i) => {
-          const color =
-            entry.includes('✓')         ? '#3a7a4a' :
-            entry.includes('failed') ||
-            entry.includes('error') ||
-            entry.includes('Error')     ? '#7a3a3a' :
-            entry.includes('peer:conn') ? '#3a5a7a' :
-            entry.includes('[Alice]')   ? '#5a4a8a' :
-            entry.includes('[Betty]')   ? '#7a4a3a' :
-                                          '#2a4a3a'
-          return (
-            <div key={i} style={{ ...mono, fontSize: 11, color, lineHeight: 1.5,
-              whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-              {entry}
-            </div>
-          )
-        })
-      )}
-    </div>
-  )
-}
-
-// ── Main view ─────────────────────────────────────────────────────────────────
-
-export default function MessengerView() {
+export function AliceView() {
   const { address } = useAccount()
-
   const { data: eeeData } = useReadContract({
-    address: BACK_ADDRESS,
-    abi: BACK_ABI,
-    functionName: 'getEEE',
-    args: [CHANNEL_ID as `0x${string}`],
-    query: { enabled: true },
+    address: BACK_ADDRESS, abi: BACK_ABI, functionName: 'getEEE',
+    args: [CHANNEL_ID as `0x${string}`], query: { enabled: true },
   })
   const [eeePointer, eeeEpoch] = eeeData ?? ['', 0n]
   const pointer = eeePointer || undefined
 
   const [logs, setLogs] = useState<string[]>([])
-  const addLog = useCallback((msg: string) => setLogs(prev => [...prev, msg]), [])
+  const addLog = useCallback((msg: string) => setLogs(p => [...p, msg]), [])
 
-  const aliceResult = useMessenger(address, pointer, 'Alice', addLog)
-  const bettyResult = useDemoMessenger(DEMO_PRIVATE_KEYS.B, 'Betty', pointer, addLog)
+  const result = useMessenger(address, pointer, 'Alice', addLog)
 
   if (!address) {
     return (
       <div style={{ maxWidth: 480, margin: '40px auto', padding: 32 }}>
-        <span style={{ ...mono, color: C.muted }}>
-          Connect your wallet in the Live tab first.
-        </span>
+        <span style={{ ...mono, color: C.muted }}>Connect your wallet in the Live tab first.</span>
       </div>
     )
   }
 
   return (
-    <div style={{ padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-        <MessengerPanel
-          label="Alice"
-          accentColor={C.accent}
-          isDemo={false}
-          pointer={pointer}
-          eeeEpoch={eeeEpoch}
-          result={aliceResult}
-        />
-        <MessengerPanel
-          label="Betty"
-          accentColor={C.orange}
-          isDemo={true}
-          pointer={pointer}
-          eeeEpoch={eeeEpoch}
-          result={bettyResult}
-        />
-      </div>
-      <LogPanel logs={logs} />
-    </div>
+    <ParticipantView
+      label="Alice" accentColor={C.accent}
+      isDemo={false} pointer={pointer} eeeEpoch={eeeEpoch}
+      result={result} logs={logs}
+    />
+  )
+}
+
+// ── Betty (demo key, auto-connect) ────────────────────────────────────────────
+
+export function BettyView() {
+  const { data: eeeData } = useReadContract({
+    address: BACK_ADDRESS, abi: BACK_ABI, functionName: 'getEEE',
+    args: [CHANNEL_ID as `0x${string}`], query: { enabled: true },
+  })
+  const [eeePointer, eeeEpoch] = eeeData ?? ['', 0n]
+  const pointer = eeePointer || undefined
+
+  const [logs, setLogs] = useState<string[]>([])
+  const addLog = useCallback((msg: string) => setLogs(p => [...p, msg]), [])
+
+  const result = useDemoMessenger(DEMO_PRIVATE_KEYS.B, 'Betty', pointer, addLog)
+
+  return (
+    <ParticipantView
+      label="Betty" accentColor={C.orange}
+      isDemo={true} pointer={pointer} eeeEpoch={eeeEpoch}
+      result={result} logs={logs}
+    />
   )
 }

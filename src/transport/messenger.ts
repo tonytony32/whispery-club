@@ -166,7 +166,10 @@ export class L1Messenger extends EventTarget {
 
       try {
         const l0: L0Envelope = JSON.parse(new TextDecoder().decode(env.data))
-        const text = openGroupEnvelope(contentKey, l0)
+        const { text, realSenderPk } = openGroupEnvelope(contentKey, l0)
+
+        // Filter out own messages — already shown as 'out' when sent
+        if (bytesToHex(realSenderPk) === bytesToHex(this.pubKey)) return
 
         const event = new CustomEvent('message', {
           detail: { text, senderPk: l0.sender_pk, timestamp: l0.timestamp },

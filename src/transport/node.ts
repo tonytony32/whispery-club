@@ -1,7 +1,7 @@
 import { createLightNode, Protocols } from '@waku/sdk'
 import type { LightNode } from '@waku/sdk'
 
-export type NodeStatus = 'idle' | 'connecting' | 'connected' | 'error'
+export type NodeStatus = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error'
 
 const PEER_TIMEOUT_MS = 45_000
 
@@ -26,14 +26,21 @@ export async function createWakuNode(options: WakuNodeOptions = {}): Promise<Lig
     throw err
   }
 
-  // Peer event logging
+  // Peer event logging + disconnected status
+  let peerCount = 0
   node.libp2p.addEventListener('peer:connect', (evt: Event) => {
-    const id = ((evt as CustomEvent).detail?.toString() ?? 'unknown').slice(0, 22)
-    onLog?.(`peer:connect  ${id}…`)
+    peerCount++
+    const id = ((evt as CustomEvent).detail?.toString() ?? '?').slice(0, 22)
+    onLog?.(`peer:connect  ${id}… (${peerCount} total)`)
   })
   node.libp2p.addEventListener('peer:disconnect', (evt: Event) => {
-    const id = ((evt as CustomEvent).detail?.toString() ?? 'unknown').slice(0, 22)
-    onLog?.(`peer:disconnect ${id}…`)
+    peerCount = Math.max(0, peerCount - 1)
+    const id = ((evt as CustomEvent).detail?.toString() ?? '?').slice(0, 22)
+    onLog?.(`peer:disconnect ${id}… (${peerCount} remaining)`)
+    if (peerCount === 0) {
+      onStatus?.('disconnected')
+      onLog?.('All peers lost — node disconnected')
+    }
   })
 
   onLog?.(`Waiting for peers with LightPush + Filter (timeout ${PEER_TIMEOUT_MS / 1000}s)…`)
