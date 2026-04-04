@@ -297,7 +297,59 @@ function Row({ label, value, color }: { label: string; value: string; color: str
 
 // ── Tab toggle ────────────────────────────────────────────────────────────────
 
-type Tab = 'live' | 'messenger' | 'demo' | 'omnibar'
+type Tab = 'omnibar' | 'messenger' | 'demo'
+
+// ── Persistent wallet pill ────────────────────────────────────────────────────
+
+function WalletPill() {
+  const { address, isConnected } = useAccount()
+  const { connect, isPending }   = useConnect()
+  const { disconnect }           = useDisconnect()
+
+  if (isConnected && address) {
+    const short = address.slice(0, 6) + '…' + address.slice(-4)
+    return (
+      <button
+        onClick={() => disconnect()}
+        title="Click to disconnect"
+        style={{
+          ...mono, fontSize: 11, fontWeight: 700,
+          padding: '5px 14px', borderRadius: 9999,
+          background: C.raised,
+          border: `1px solid ${C.green}55`,
+          color: C.green, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 6,
+          transition: 'border-color 0.2s',
+        }}
+      >
+        <span style={{
+          width: 6, height: 6, borderRadius: '50%',
+          background: C.green, display: 'inline-block', flexShrink: 0,
+        }} />
+        {short}
+      </button>
+    )
+  }
+
+  return (
+    <button
+      onClick={() => connect({ connector: injected() })}
+      disabled={isPending}
+      style={{
+        ...mono, fontSize: 11, fontWeight: 700,
+        padding: '5px 14px', borderRadius: 9999,
+        background: 'transparent',
+        border: `1px solid ${C.border}`,
+        color: C.muted, cursor: isPending ? 'default' : 'pointer',
+        transition: 'border-color 0.2s',
+      }}
+    >
+      {isPending ? 'Connecting…' : 'Connect wallet'}
+    </button>
+  )
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('omnibar')
@@ -327,24 +379,20 @@ export default function App() {
 
       {/* Header */}
       <div style={{ borderBottom: `1px solid ${C.border}`, padding: '14px 28px',
-        display: 'flex', alignItems: 'center', gap: 20 }}>
+        display: 'flex', alignItems: 'center', gap: 16 }}>
         <span style={{ fontSize: 16, fontWeight: 700, letterSpacing: 3, color: C.accent }}>
           WHISPERY
         </span>
-        <span style={{ color: C.muted, fontSize: 11, flex: 1 }}>
-          Level 1 · NFT-gated encrypted messenger
-        </span>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flex: 1 }}>
           <TabBtn id="omnibar">⬡ Omnibar</TabBtn>
-          <TabBtn id="live">⬡ Live · Sepolia</TabBtn>
           <TabBtn id="messenger">⬡ Messenger</TabBtn>
           <TabBtn id="demo">⬡ Crypto Demo</TabBtn>
         </div>
+        <WalletPill />
       </div>
 
       {/* Body */}
       {tab === 'omnibar'   ? <Omnibar />       :
-       tab === 'live'      ? <LiveView />      :
        tab === 'messenger' ? <MessengerView /> :
                              <CryptoDemo />}
     </div>
