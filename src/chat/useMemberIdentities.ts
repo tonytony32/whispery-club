@@ -147,7 +147,11 @@ async function resolveIdentity(address: string): Promise<MemberIdentity> {
     // ── Step 2: check ERC-8004 registry on Sepolia ───────────────────────────
     const sepProvider = await sepoliaProvider()
     const registry    = new ethers.Contract(ERC8004_REGISTRY, ERC8004_ABI, sepProvider)
-    const balance: bigint = await registry.balanceOf(address)
+
+    // balanceOf may return 0x if the registry isn't deployed or doesn't implement
+    // the function — treat any failure as zero (not an agent).
+    let balance = 0n
+    try { balance = await registry.balanceOf(address) } catch { /* not an agent */ }
 
     if (balance > 0n) {
       const agentId: bigint = await registry.tokenOfOwnerByIndex(address, 0)
