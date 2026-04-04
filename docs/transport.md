@@ -224,7 +224,9 @@ User clicks "Connect to Waku"
 User sends "hello" to the group
   │
   ├─ L0 = createGroupEnvelope(wallet, content_key, channel_id, "hello", epoch)
-  │         → { ciphertext: secretbox(msg, nonce, content_key), sender_pk, timestamp, signature }
+  │         plaintext = realPk(32) || signingPk(33) || ethAddr(20) || siweSig(65) || "hello"
+  │         ciphertext = nonce[24] || secretbox(plaintext, nonce, content_key)
+  │         sender_pk  = random 32 bytes   ← Zero Metadata: no identity on the wire
   ├─ hint    = HMAC-SHA256(channelIdBytes, "SWARM_L1_CHANNEL_HINT")[0:8]
   ├─ payload = encode({ mac_hint: hint, data: JSON(L0) })
   └─ node.lightPush.send → Waku
@@ -235,12 +237,15 @@ Member receives a message on the channel topic
   ├─ mac_hint == channelHint? → No  → "Group: Ignored by channel hint"
   │                           → Yes → JSON.parse(data) → L0 Envelope
   ├─ openGroupEnvelope(content_key, l0)
-  │     secretbox.open(ciphertext, nonce, content_key) → plaintext
-  │     signingPubKey = plaintext[0:33]   ← in-band signing key
-  │     message       = plaintext[33:]
-  │     secp256k1.verify(l0.signature, sha256(canonical), signingPubKey)
-  │           invalid? → throw "firma inválida" (discard)
-  └─ emit 'message' event → { text, senderPk, timestamp } → UI
+  │     secretbox.open(ciphertext, nonce, content_key) → plain[150+]
+  │     Stage 1 — SIWE:  ecrecover(siweSig, hash(siweMsg(ethAddr))) == ethAddr
+  │                       → fail → "identidad falsa" (discard)
+  │     Stage 2 — Keys:  sha256(siweSig) → derive x25519 + signingPk → compare
+  │                       → mismatch → "falsificación de llaves detectada" (discard)
+  │     Stage 3 — L0 sig: secp256k1.verify(signature, sha256(canonical), signingPk)
+  │                       → fail → "firma inválida" (discard)
+  │     return plain[150:] as message text
+  └─ emit 'message' event → { text, senderPk: realPk, timestamp } → UI
 ```
 
 ---
@@ -270,41 +275,55 @@ src/transport/
 src/core/
   ipfs.ts               uploadJSON (write) + fetchJSON (read) via IPFS gateway
   crypto.ts             L0 crypto: createGroupEnvelope / openGroupEnvelope / accessGroupChannel
-                          in-band sender verification (signingPubKey prefix inside ciphertext)
+                          Zero Metadata: random outer sender_pk
+                          Anti-Spoofing SIWE in-band: 150-byte identity header inside ciphertext
+                          Three-stage validation: SIWE ecrecover → key derivation → L0 sig
   __tests__/
-    crypto.test.ts      L0 sender verification tests (6)
+    crypto.test.ts      L0 group envelope tests: round-trip, zero metadata, 3 validation stages (12)
 ```
 
 ---
 
-## Sender verification (implemented — in-band)
+## Zero Metadata + Anti-Spoofing SIWE in-band (implemented at L0)
 
-`openGroupEnvelope` always verifies the sender's secp256k1 signature. No external registry is needed: the signing public key travels **inside the ciphertext** as a 33-byte prefix, invisible to the transport layer.
+Two improvements implemented simultaneously, both strictly in `src/core/crypto.ts`:
 
-**How the sender packs it (`createGroupEnvelope`):**
+### Zero Metadata
 
-```
-signingPubKey = secp256k1.getPublicKey(sender.ethPrivKey, true)  // 33 bytes, compressed
-plaintext     = signingPubKey[33] || message_utf8
-ciphertext    = nonce[24] || secretbox(plaintext, nonce, content_key)
-```
+The outer `sender_pk` field is **32 random bytes** on every group message. Transport nodes and Waku relay operators see only ephemeral random data — the real sender identity never appears in the clear.
 
-**How the recipient unpacks it (`openGroupEnvelope`):**
+### Anti-Spoofing SIWE in-band
+
+The plaintext (before `secretbox` encryption) carries a **150-byte identity header**:
 
 ```
-plain         = secretbox.open(ciphertext, nonce, content_key)   // Poly1305 rejects tampering
-signingPubKey = plain[0:33]
-message       = plain[33:]
-hash          = sha256(canonical_JSON_without_signature)
-secp256k1.verify(envelope.signature, hash, signingPubKey)        // throws "firma inválida" if false
+real_sender_pk[32] || signing_pub_key[33] || eth_address[20] || siwe_signature[65] || message_utf8
 ```
 
-If the signature doesn't match or the payload is malformed, `"firma inválida"` is thrown and the message is discarded. There is no silent degradation.
+`openGroupEnvelope` runs three stages after decryption:
+
+```
+Stage 1 — SIWE identity
+  ecrecover(siweSignature, hash(siweMessage(ethAddress))) == ethAddress
+  → fail → throw "identidad falsa"
+
+Stage 2 — Key derivation
+  seed = sha256(siweSignature)
+  sha256(seed) → nacl.box.keyPair → compare with real_sender_pk
+  HKDF(seed, "whispery/signing/v1") → secp256k1 pubkey → compare with signing_pub_key
+  → mismatch → throw "falsificación de llaves detectada"
+
+Stage 3 — L0 outer signature
+  secp256k1.verify(envelope.signature, sha256(canonical), signing_pub_key)
+  → fail → throw "firma inválida"
+```
+
+To forge a valid message as Alice, an attacker needs Alice's Ethereum private key. Without it, Stage 1 (ecrecover) fails.
 
 ---
 
 ## What is not implemented yet
 
-- **Key registry on-chain**: the in-band `signingPubKey` is self-reported — binding it to a verified on-chain identity requires an external authority. A natural fit: `registerKey(bytes32 x25519PubKey, bytes secp256k1SigningPubKey)` on the NFT or Backpack contract. Once deployed, recipients can cross-check the in-band key against the registry.
+- **Key registry on-chain**: the SIWE proof chain binds `ethAddress → keys` cryptographically, but `ethAddress` itself is self-declared inside the encrypted header. A Key Registry contract storing `(x25519PubKey, ethAddress)` on-chain would allow cross-referencing the declared identity against verified NFT membership.
 - **Store protocol**: messages sent while a peer is offline are lost. Waku has a Store protocol for retrieving message history.
 - **Key rotation**: if a user reinstalls MetaMask with the same seed phrase, they recover the same Ethereum keys → same SIWE signature → same Whispery keypair. Key rotation would require a versioned SIWE nonce or an explicit rotation mechanism.

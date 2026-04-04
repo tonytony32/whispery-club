@@ -70,9 +70,15 @@ function seal(payload: Record<string, unknown>, privKey: Uint8Array): string {
 
 export interface Wallet {
   label: string
+  /**
+   * Clave de firma secp256k1 derivada — NO es la clave privada de Ethereum.
+   * Derivación: HKDF(sha256(siweSignature), "whispery/signing/v1")
+   * Usada para sellar cada L0 Envelope (seal). Nunca expuesta directamente.
+   */
   ethPrivKey: Uint8Array
-  ethAddress: string         // checksummed via viem
-  x25519: nacl.BoxKeyPair    // derivado determinísticamente desde firma SIWE
+  ethAddress: string          // checksummed via viem
+  x25519: nacl.BoxKeyPair     // X25519 keypair derivado desde sha256(siweSignature)
+  siweSignature: Uint8Array   // 65 bytes: r(32) || s(32) || v(1) — prueba de identidad in-band
 }
 
 /**
@@ -86,7 +92,12 @@ export interface Envelope {
   version: 1
   channel_id: string
   epoch: number
-  sender_pk: string          // X25519 public key (hex) del emisor
+  /**
+   * Modo grupo: 32 bytes aleatorios (ephemeral key) — el remitente real viaja
+   *             dentro del ciphertext cifrado con content_key.
+   * Modo P2P:   clave X25519 real del emisor — necesaria para el DH en descifrado.
+   */
+  sender_pk: string
   ciphertext: string         // hex(nonce[24] || secretbox_output)
   mac_hint: string           // hex(nonce[0..3]) — routing hint
   timestamp: number          // unix ms — estampado en origen (Reto 4)
@@ -151,26 +162,44 @@ export function siweMessage(address: string): string {
   ].join('\n')
 }
 
+/**
+ * Firma el mensaje SIWE y devuelve la firma completa de 65 bytes:
+ *   r(32) || s(32) || v(1)    donde v = recovery_bit + 27 (convención Ethereum)
+ *
+ * Formato idéntico al que devuelve MetaMask/wagmi. Determinista via RFC 6979.
+ */
 function siweSign(privKey: Uint8Array, address: string): Uint8Array {
-  const msg = enc.encode(siweMessage(address))
+  const msg    = enc.encode(siweMessage(address))
   const prefix = enc.encode(`\x19Ethereum Signed Message:\n${msg.length}`)
-  const hash = keccak_256(concatBytes(prefix, msg))
-  return secp256k1.sign(hash, privKey).toCompactRawBytes()
+  const hash   = keccak_256(concatBytes(prefix, msg))
+  const sig    = secp256k1.sign(hash, privKey)
+  return concatBytes(sig.toCompactRawBytes(), new Uint8Array([sig.recovery + 27]))
 }
 
 /**
- * Crea una wallet desde una clave privada Ethereum hex.
- * El par X25519 se deriva deterministamente: SIWE → firma → sha256 → seed.
+ * Crea una wallet desde una clave privada Ethereum hex (uso en tests y demo).
+ *
+ * Derivación idéntica a keysFromSig, pero partiendo de la clave privada en lugar
+ * de la firma MetaMask. La clave privada Ethereum solo se usa aquí internamente
+ * para firmar el SIWE — no se almacena en la Wallet resultante.
+ *
+ *   siweSignature = secp256k1.sign(hash_SIWE, ethPrivKey)  [65 bytes]
+ *   seed          = sha256(siweSignature)
+ *   x25519        = nacl.box.keyPair(seed)
+ *   ethPrivKey    = HKDF(seed, "whispery/signing/v1")       ← clave derivada, no ETH key
  */
 export function createWallet(privKeyHex: string, label: string): Wallet {
-  const ethPrivKey = fromHex(privKeyHex)
-  const address = ethAddress(ethPrivKey)
-  const seed = sha256(siweSign(ethPrivKey, address))
+  const rawPrivKey      = fromHex(privKeyHex)
+  const address         = ethAddress(rawPrivKey)
+  const siweSignature   = siweSign(rawPrivKey, address)    // 65 bytes
+  const seed            = sha256(siweSignature)
+  const signingKey      = derive(seed, 'whispery/signing/v1')
   return {
     label,
-    ethPrivKey,
-    ethAddress: address,
-    x25519: nacl.box.keyPair.fromSecretKey(seed),
+    ethPrivKey:     signingKey,
+    ethAddress:     address,
+    x25519:         nacl.box.keyPair.fromSecretKey(seed),
+    siweSignature,
   }
 }
 
@@ -190,15 +219,17 @@ export function createWallet(privKeyHex: string, label: string): Wallet {
  * @param ethAddress    Dirección Ethereum real del usuario (de wagmi useAccount).
  */
 export function keysFromSig(signatureHex: string, ethAddress: string): Wallet {
-  const seed       = sha256(fromHex(signatureHex.replace(/^0x/, '')))
-  const x25519     = nacl.box.keyPair.fromSecretKey(seed)
-  const signingKey = derive(seed, 'whispery/signing/v1')
+  const siweSignature = fromHex(signatureHex.replace(/^0x/, ''))  // 65 bytes
+  const seed          = sha256(siweSignature)
+  const x25519        = nacl.box.keyPair.fromSecretKey(seed)
+  const signingKey    = derive(seed, 'whispery/signing/v1')
 
   return {
-    label:      ethAddress.slice(0, 10) + '…',
-    ethPrivKey: signingKey,        // clave de firma derivada (no la clave ETH real)
-    ethAddress: getAddress(ethAddress),
+    label:          ethAddress.slice(0, 10) + '…',
+    ethPrivKey:     signingKey,
+    ethAddress:     getAddress(ethAddress),
     x25519,
+    siweSignature,
   }
 }
 
@@ -356,22 +387,93 @@ export function accessGroupChannel(member: Wallet, eee: EEE): Uint8Array | null 
   return nacl.secretbox.open(box, nonce, access_kdk)  // null si alterado
 }
 
-// Longitud fija de la clave pública secp256k1 comprimida (formato 02/03 + 32 bytes X).
+// ── Layout del plaintext interno del grupo (cabecera fija: 150 bytes) ────────
+//
+//   Offset  Longitud  Campo
+//   ──────  ────────  ─────
+//        0        32  real_sender_pk    — clave X25519 real del emisor
+//       32        33  signing_pub_key   — clave de firma secp256k1 (comprimida)
+//       65        20  eth_address       — dirección Ethereum (20 bytes crudos)
+//       85        65  siwe_signature    — r(32) || s(32) || v(1)
+//      150      var   message_utf8      — texto del mensaje
+//
+// La cabecera viaja cifrada con content_key — invisible para la capa de transporte.
+// El campo `sender_pk` del sobre exterior son 32 bytes aleatorios (ephemeral key)
+// para no revelar la identidad del emisor a nodos Waku o a observadores.
+
+const REAL_PK_LEN    = 32
 const SIGNING_PK_LEN = 33
+const ETH_ADDR_LEN   = 20
+const SIWE_SIG_LEN   = 65
+const INNER_HEADER   = REAL_PK_LEN + SIGNING_PK_LEN + ETH_ADDR_LEN + SIWE_SIG_LEN  // 150
+
+const OFF_REAL_PK    = 0
+const OFF_SIGNING_PK = OFF_REAL_PK    + REAL_PK_LEN     // 32
+const OFF_ETH_ADDR   = OFF_SIGNING_PK + SIGNING_PK_LEN  // 65
+const OFF_SIWE_SIG   = OFF_ETH_ADDR   + ETH_ADDR_LEN    // 85
+const OFF_MESSAGE    = OFF_SIWE_SIG   + SIWE_SIG_LEN    // 150
+
+/**
+ * Validación 1 — SIWE: comprueba que la firma SIWE fue producida por el dueño
+ * de `declaredAddress`. Usa ecrecover sobre el hash del mensaje SIWE canónico.
+ * Lanza 'identidad falsa' si la dirección recuperada no coincide.
+ */
+function verifySiweSignature(sig: Uint8Array, declaredAddress: string): void {
+  const msg    = enc.encode(siweMessage(declaredAddress))
+  const prefix = enc.encode(`\x19Ethereum Signed Message:\n${msg.length}`)
+  const hash   = keccak_256(concatBytes(prefix, msg))
+
+  // sig = r(32) || s(32) || v(1), v = 27 o 28 (convención Ethereum)
+  const recovery  = sig[64] - 27
+  const recovered = secp256k1.Signature
+    .fromCompact(sig.slice(0, 64))
+    .addRecoveryBit(recovery)
+    .recoverPublicKey(hash)
+
+  const recoveredAddress = getAddress(
+    '0x' + bytesToHex(keccak_256(recovered.toRawBytes(false).slice(1)).slice(-20)),
+  )
+  if (recoveredAddress !== declaredAddress) {
+    throw new Error('identidad falsa — la firma SIWE no corresponde a la dirección declarada')
+  }
+}
+
+/**
+ * Validación 2 — Derivación: rederiva las claves desde la siweSignature y
+ * comprueba que coinciden con las claves declaradas en el plaintext.
+ * Garantiza que X25519 y signing key son hijas legítimas de esa firma SIWE.
+ */
+function verifyKeyDerivation(
+  siweSignature: Uint8Array,
+  declaredX25519Pk: Uint8Array,
+  declaredSigningPk: Uint8Array,
+): void {
+  const seed            = sha256(siweSignature)
+  const expectedX25519  = nacl.box.keyPair.fromSecretKey(seed).publicKey
+  const expectedSigning = secp256k1.getPublicKey(derive(seed, 'whispery/signing/v1'), true)
+
+  if (bytesToHex(expectedX25519) !== bytesToHex(declaredX25519Pk)) {
+    throw new Error('falsificación de llaves detectada — X25519 no coincide con derivación SIWE')
+  }
+  if (bytesToHex(expectedSigning) !== bytesToHex(declaredSigningPk)) {
+    throw new Error('falsificación de llaves detectada — signing key no coincide con derivación SIWE')
+  }
+}
 
 /**
  * Un miembro autorizado cifra un mensaje para el canal.
- * Usa el content_key compartido (obtenido vía accessGroupChannel).
  *
- * Verificación in-band (Reto 4 extendido):
- *   El plaintext que se cifra con content_key lleva la clave pública de firma
- *   secp256k1 del emisor como prefijo de 33 bytes (comprimida):
+ * Privacy — Zero Metadata:
+ *   El campo `sender_pk` del sobre exterior es un ephemeral key aleatorio.
+ *   La identidad real del emisor viaja cifrada dentro del ciphertext.
  *
- *     plaintext = signingPubKey[33] || message_utf8
+ * Anti-Spoofing — prueba SIWE in-band:
+ *   El plaintext incluye la firma SIWE original del emisor (65 bytes).
+ *   El receptor puede verificar (1) que la firma SIWE fue hecha por ethAddress,
+ *   (2) que las claves declaradas se derivan correctamente de esa firma,
+ *   (3) que la firma L0 es válida para esas claves.
  *
- *   Al descifrar, openGroupEnvelope extrae esos 33 bytes y los usa directamente
- *   para verificar la firma de la Capa 5. No se necesita ningún registro externo:
- *   la identidad viaja dentro del ciphertext, invisible para la capa de transporte.
+ *   plaintext = realPk(32) || signingPk(33) || ethAddr(20) || siweSig(65) || msg
  */
 export function createGroupEnvelope(
   sender: Wallet,
@@ -380,56 +482,73 @@ export function createGroupEnvelope(
   message: string,
   epoch = 0,
 ): Envelope {
-  const signingPubKey = secp256k1.getPublicKey(sender.ethPrivKey, true) // 33 bytes, comprimida
-  const plaintext     = concatBytes(signingPubKey, enc.encode(message))
+  const signingPubKey = secp256k1.getPublicKey(sender.ethPrivKey, true)  // 33 bytes
+  const ethAddrBytes  = fromHex(sender.ethAddress)                        // 20 bytes
+
+  const plaintext = concatBytes(
+    sender.x25519.publicKey,  // 32 — real X25519 sender identity
+    signingPubKey,            // 33 — secp256k1 signing public key
+    ethAddrBytes,             // 20 — Ethereum address
+    sender.siweSignature,     // 65 — SIWE proof: r || s || v
+    enc.encode(message),      // var — message text
+  )
 
   const nonce      = nacl.randomBytes(nacl.secretbox.nonceLength)
   const box        = nacl.secretbox(plaintext, nonce, content_key)
   const ciphertext = toHex(concatBytes(nonce, box))
 
   const partial = {
-    version: 1 as const,
+    version:   1 as const,
     channel_id,
     epoch,
-    sender_pk: toHex(sender.x25519.publicKey),
+    sender_pk: toHex(nacl.randomBytes(32)),  // ephemeral key — no revela identidad
     ciphertext,
-    mac_hint: toHex(nonce.slice(0, 4)),
+    mac_hint:  toHex(nonce.slice(0, 4)),
     timestamp: Date.now(),
   }
   return { ...partial, signature: seal(partial, sender.ethPrivKey) }
 }
 
 /**
- * Descifra un envelope de grupo y verifica la firma secp256k1 del emisor.
+ * Descifra un envelope de grupo y aplica la cadena de validación de identidad.
  *
- * Flujo:
- *   1. secretbox.open(ciphertext, nonce, content_key) → plaintext
- *      Falla si el ciphertext fue alterado (Poly1305 lo detecta).
- *   2. signingPubKey = plaintext[0:33]   ← clave pública de firma in-band
- *      message       = plaintext[33:]    ← texto del mensaje
- *   3. hash = sha256(canonical_JSON_sin_signature)
- *      secp256k1.verify(envelope.signature, hash, signingPubKey)
- *      → false ⟹ lanza 'firma inválida'
+ * Flujo de validación:
+ *   1. secretbox.open  → Poly1305 garantiza integridad del ciphertext
+ *   2. verifySiweSignature  → ecrecover prueba que ethAddress firmó el SIWE
+ *   3. verifyKeyDerivation  → rederivación prueba que X25519 y signing key son
+ *                             legítimas hijas de esa firma SIWE
+ *   4. secp256k1.verify     → la firma L0 cubre todos los campos del sobre
  *
- * @param content_key  Clave compartida del canal (via accessGroupChannel).
- * @param envelope     L0 Envelope recibido del transporte.
+ * Cualquier fallo lanza un error explícito y descarta el mensaje.
  */
 export function openGroupEnvelope(content_key: Uint8Array, envelope: Envelope): string {
-  // ── Capa 3: descifrar con content_key ─────────────────────────────────────
+  // ── Capa 3: descifrar ─────────────────────────────────────────────────────
   const raw   = fromHex(envelope.ciphertext)
   const nonce = raw.slice(0, nacl.secretbox.nonceLength)
   const box   = raw.slice(nacl.secretbox.nonceLength)
   const plain = nacl.secretbox.open(box, nonce, content_key)
   if (!plain) throw new Error('Group: fallo en descifrado')
 
-  // ── Extraer clave de firma in-band ────────────────────────────────────────
-  if (plain.length <= SIGNING_PK_LEN) {
-    throw new Error('firma inválida — payload malformado, falta clave de firma in-band')
+  if (plain.length <= INNER_HEADER) {
+    throw new Error('firma inválida — payload malformado, cabecera de identidad incompleta')
   }
-  const signingPubKey = plain.slice(0, SIGNING_PK_LEN)
-  const msgBytes      = plain.slice(SIGNING_PK_LEN)
 
-  // ── Capa 5: verificar firma de no repudio ─────────────────────────────────
+  // ── Extraer cabecera de identidad ─────────────────────────────────────────
+  const realSenderPk  = plain.slice(OFF_REAL_PK,    OFF_SIGNING_PK)
+  const signingPubKey = plain.slice(OFF_SIGNING_PK, OFF_ETH_ADDR)
+  const ethAddrBytes  = plain.slice(OFF_ETH_ADDR,   OFF_SIWE_SIG)
+  const siweSignature = plain.slice(OFF_SIWE_SIG,   OFF_MESSAGE)
+  const msgBytes      = plain.slice(OFF_MESSAGE)
+
+  const declaredAddress = getAddress('0x' + toHex(ethAddrBytes))
+
+  // ── Validación 1: SIWE — ethAddress firmó el mensaje SIWE canónico ────────
+  verifySiweSignature(siweSignature, declaredAddress)
+
+  // ── Validación 2: Derivación — las claves son hijas legítimas del SIWE ────
+  verifyKeyDerivation(siweSignature, realSenderPk, signingPubKey)
+
+  // ── Validación 3: Firma L0 — no repudio sobre todos los campos del sobre ──
   const hash     = sha256(enc.encode(canonicalize(envelope as Record<string, unknown>)))
   const sigBytes = fromHex(envelope.signature)
   if (!secp256k1.verify(sigBytes, hash, signingPubKey)) {

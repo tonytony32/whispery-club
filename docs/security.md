@@ -38,22 +38,33 @@ P2P messages use **ECIES**: the sender generates an ephemeral X25519 keypair for
 
 Every ciphertext carries an embedded **Poly1305 authentication tag** (inside NaCl `secretbox`). A single altered bit in the ciphertext — anywhere — causes decryption to fail with an explicit error before any plaintext is produced. There is no way to tamper with a message silently.
 
-### Sender authenticity (in-band verification)
+### Zero Metadata (sender privacy at transport layer)
 
-Every group message embeds the sender's compressed secp256k1 signing public key (33 bytes) as a prefix inside the ciphertext:
+In group mode, the outer `sender_pk` field of every envelope is **32 random bytes** — an ephemeral key with no relationship to the sender's identity. Transport nodes, relay operators, and observers see only random bytes and cannot determine who sent each message.
+
+The real sender identity travels inside the ciphertext, encrypted with `content_key`, and is only visible to members who can decrypt.
+
+### Sender authenticity (Anti-Spoofing SIWE in-band)
+
+Every group message embeds a full **Anti-Spoofing identity header** (150 bytes) inside the ciphertext:
 
 ```
-plaintext = signingPubKey[33] || message_utf8
+plaintext = real_sender_pk[32] || signing_pub_key[33] || eth_address[20] || siwe_signature[65] || message_utf8
 ciphertext = nonce[24] || secretbox(plaintext, nonce, content_key)
 ```
 
-On receipt, `openGroupEnvelope`:
-1. Decrypts with `content_key` — Poly1305 rejects any tampering before this step completes
-2. Extracts `signingPubKey` from `plain[0:33]`
-3. Verifies the outer `signature` field against `sha256(canonical_JSON_without_signature)` using the extracted key
-4. Throws `"firma inválida"` and discards the message on any failure
+On receipt, `openGroupEnvelope` runs three cryptographic stages in sequence:
 
-The signing key is invisible to transport nodes — it only exists inside the ciphertext, accessible only to members who hold `content_key`.
+**Stage 1 — SIWE ecrecover:** `ecrecover(siweSignature, hash(siweMessage(ethAddress))) == ethAddress`
+Proves the declared Ethereum address actually signed the SIWE message. Throws `"identidad falsa"` on failure.
+
+**Stage 2 — Key derivation:** re-derives `seed = sha256(siweSignature)`, then checks that `nacl.box.keyPair(seed).publicKey == real_sender_pk` and `secp256k1.getPublicKey(HKDF(seed, "whispery/signing/v1"), true) == signing_pub_key`.
+Proves the declared keys are legitimate children of that SIWE signature. Throws `"falsificación de llaves detectada"` on failure.
+
+**Stage 3 — L0 outer signature:** `secp256k1.verify(envelope.signature, sha256(canonical_outer_fields), signing_pub_key)`.
+Non-repudiation over all outer envelope fields. Throws `"firma inválida"` on failure.
+
+To forge a message claiming to be from Alice, an attacker would need Alice's Ethereum private key to produce a valid `siweSignature` for her `ethAddress`. Without it, Stage 1 fails before any key material is even checked.
 
 ### Non-repudiation
 
@@ -98,8 +109,8 @@ The IPFS CID (content-addressed hash) of the EEE is stored on-chain in the `Whis
 | Eavesdrop on Waku traffic | L1 | Group: `content_key` encrypts payload; P2P: full ECIES | Mitigated |
 | Replay a captured message | L0 | `epoch` + `timestamp` allow stale-message detection | Partial — no enforced window yet |
 | Tamper with ciphertext | L0 | Poly1305 tag rejects any modification | Mitigated |
-| Forge sender identity | L0 | In-band secp256k1 signature, verified on every message | Mitigated |
-| Member impersonates another | L0 | Requires target's `ethPrivKey` to produce valid signature | Mitigated |
+| Forge sender identity | L0 | SIWE ecrecover → key derivation → L0 sig (three-stage chain) | Mitigated |
+| Member impersonates another | L0 | Requires target's Ethereum private key to pass SIWE ecrecover | Mitigated |
 | Non-member accesses channel | L0 | ACT lookup returns `null`; no error exposed | Mitigated |
 | Malicious relay drops messages | L1 | Waku multi-relay; no single relay is trusted | Mitigated by network |
 | Malicious relay censors topics | L1 | No mitigation — relay can silently drop a topic | Open |
@@ -150,13 +161,13 @@ The `timestamp` and `epoch` fields allow detecting stale or replayed messages, b
 
 Waku transport exposes metadata: channel topics, message timing, and payload sizes. An observer cannot read message content but can infer communication patterns. Padding, timing jitter, and decoy traffic are not implemented.
 
-### Group metadata (`sender_pk`)
+### Group metadata
 
-In group mode, `sender_pk` (the sender's X25519 public key) is visible in the L0 Envelope, which is sent unencrypted over the Waku channel. Transport nodes and observers can see which X25519 key sent each message and when.
+The outer `sender_pk` is now random (see Zero Metadata above). However, message **size** and **timing** are still observable at the transport layer. Payload length reveals message length (minus the fixed 150-byte header). Timing analysis may reveal communication patterns between members.
 
-### In-band signing key binding
+### In-band SIWE binding to on-chain identity
 
-The secp256k1 signing key embedded in the ciphertext is self-reported. A malicious member cannot forge another's signature, but they could claim to use any signing key that isn't on-chain-registered. A Key Registry contract (`registerKey(bytes32 x25519PubKey, bytes secp256k1SigningPubKey)`) would close this gap by binding each X25519 identity to a verified signing key.
+The SIWE proof chain (Stage 1 + 2) cryptographically binds `ethAddress → siweSignature → keys`. However, the `ethAddress` is self-declared inside the encrypted header — there is no on-chain verification that the Ethereum address corresponds to an NFT member. A Key Registry contract storing `(x25519PubKey, ethAddress)` would close this gap by cross-referencing the declared identity against on-chain membership data.
 
 ### Message persistence
 

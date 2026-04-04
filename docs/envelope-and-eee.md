@@ -132,12 +132,22 @@ about membership is leaked.
   version:    1,
   channel_id: "780a35cc…",
   epoch:      0,
-  sender_pk:  "7a94cc…",          ← X25519 pubKey (visible on wire in group mode)
-  ciphertext: "73da6d…",          ← nonce[24] || secretbox(signingPubKey[33] || msg)
+  sender_pk:  "f3a91b…",          ← 32 random bytes (ephemeral — hides sender at transport layer)
+  ciphertext: "73da6d…",          ← nonce[24] || secretbox(identity_header[150] || msg)
   mac_hint:   "73da6d",
   timestamp:  1775239095747,
-  signature:  "c92bb4…"           ← secp256k1, verified against signingPubKey inside ciphertext
+  signature:  "c92bb4…"           ← secp256k1, verified against signing key extracted from ciphertext
 }
+```
+
+The `ciphertext` decrypts to a 150-byte identity header followed by the message:
+
+```
+[  0: 32]  real_sender_pk    — X25519 public key of the actual sender
+[ 32: 65]  signing_pub_key   — compressed secp256k1 signing key (33 bytes)
+[ 65: 85]  eth_address       — Ethereum address (20 raw bytes)
+[ 85:150]  siwe_signature    — r(32) || s(32) || v(1), the original SIWE proof
+[150:   ]  message_utf8
 ```
 
 ### Topology — five layers
@@ -146,25 +156,26 @@ The envelope is built incrementally. Each layer adds a specific security or
 routing property:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  ⑤ NON-REPUDIATION                                          │
-│     signature: secp256k1(sha256(all outer fields above))    │
-│     verified against signingPubKey extracted from layer ③   │
-├─────────────────────────────────────────────────────────────┤
-│  ④ ORIGIN SEAL                                              │
-│     timestamp: unix ms, stamped by sender                   │
-├─────────────────────────────────────────────────────────────┤
-│  ③ ENCRYPTED PAYLOAD                                        │
-│     plaintext = signingPubKey[33] || message_utf8           │
-│     ciphertext = nonce[24] || XSalsa20-Poly1305(plaintext)  │
-│     mac_hint   = nonce[0..3] — routing hint only            │
-├─────────────────────────────────────────────────────────────┤
-│  ② SENDER IDENTITY                                          │
-│     sender_pk: X25519 public key of the sender              │
-├─────────────────────────────────────────────────────────────┤
-│  ① CHANNEL CONTEXT                                          │
-│     version · channel_id · epoch                            │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  ⑤ NON-REPUDIATION                                               │
+│     signature: secp256k1(sha256(all outer fields above))         │
+│     verified against signing_pub_key extracted from layer ③      │
+├──────────────────────────────────────────────────────────────────┤
+│  ④ ORIGIN SEAL                                                   │
+│     timestamp: unix ms, stamped by sender                        │
+├──────────────────────────────────────────────────────────────────┤
+│  ③ ENCRYPTED PAYLOAD (inner layout)                              │
+│     real_sender_pk[32] || signing_pub_key[33] ||                 │
+│     eth_address[20]    || siwe_signature[65]  || message_utf8    │
+│     → encrypted with content_key (XSalsa20-Poly1305)            │
+│     mac_hint = nonce[0..3] — routing hint only                   │
+├──────────────────────────────────────────────────────────────────┤
+│  ② SENDER IDENTITY (outer — transport layer)                     │
+│     sender_pk: 32 random bytes — real identity is inside ③       │
+├──────────────────────────────────────────────────────────────────┤
+│  ① CHANNEL CONTEXT                                               │
+│     version · channel_id · epoch                                 │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 #### ① Channel context — `version`, `channel_id`, `epoch`
@@ -175,31 +186,32 @@ be decrypted by a member who only has keys for `epoch: 1`.
 
 #### ② Sender identity — `sender_pk`
 
-The X25519 public key of the sender. In a P2P channel the recipient needs
-it to recompute the DH shared secret. In a group channel it identifies who
-sent the message without revealing the content.
+**P2P:** the real X25519 public key of the sender. The recipient uses it to recompute the DH shared secret. The entire L0 Envelope is ECIES-encrypted, so `sender_pk` is invisible on the wire.
 
-In both cases, `sender_pk` travels inside the L1 `data` field. For P2P,
-the entire L0 Envelope (including `sender_pk`) is ECIES-encrypted, so it
-is invisible on the wire. For group, `sender_pk` is visible to transport nodes —
-this is the standard group messaging tradeoff: member identity is exposed
-at the transport layer, but message content is not.
+**Group:** 32 random bytes — an ephemeral key with no relationship to the sender's identity. The real sender identity is inside layer ③, encrypted with `content_key`. Transport nodes and observers see only the random bytes and cannot determine who sent the message. This is the **Zero Metadata** property: group messages reveal no identity at the transport layer.
 
 #### ③ Encrypted payload — `ciphertext`, `mac_hint`
 
 ```
-signingPubKey = secp256k1.getPublicKey(sender.ethPrivKey, true)  // 33 bytes, compressed
-nonce         = random 24 bytes
-plaintext     = signingPubKey[33] || message_utf8
-ciphertext    = nonce[24] || XSalsa20-Poly1305(plaintext, nonce, content_key)
-mac_hint      = nonce[0..3]
+nonce     = random 24 bytes
+plaintext = real_sender_pk[32]  ||  signing_pub_key[33]  ||
+            eth_address[20]     ||  siwe_signature[65]   ||  message_utf8
+ciphertext = nonce[24] || XSalsa20-Poly1305(plaintext, nonce, content_key)
+mac_hint   = nonce[0..3]
 ```
 
-The plaintext is prefixed with the sender's **secp256k1 signing public key** (33 bytes, compressed). This is the in-band mechanism for layer ⑤ verification: the key travels hidden inside the ciphertext, invisible to transport nodes, and is extracted by the recipient after decryption.
+The plaintext carries a **150-byte identity header** before the message. It contains:
 
-The Poly1305 authentication tag is embedded inside `ciphertext` by NaCl's `secretbox`. If a single bit is altered — in the signing key prefix, in the message, or in the tag itself — decryption fails before any plaintext is produced. There is no way to tamper silently.
+- `real_sender_pk` (32 bytes) — the actual X25519 public key, hidden from the transport layer
+- `signing_pub_key` (33 bytes, compressed) — the sender's secp256k1 signing key, used for layer ⑤ verification
+- `eth_address` (20 bytes) — the sender's Ethereum address, bound to the SIWE signature
+- `siwe_signature` (65 bytes) — the original SIWE proof: `r(32) || s(32) || v(1)`
 
-`mac_hint` is **not** a MAC. It is a routing hint derived from the nonce: an intermediate node uses it to filter messages without decrypting anything. Authentication is fully handled by Poly1305 inside the ciphertext.
+All four fields travel encrypted with `content_key` and are invisible to transport nodes. Together they form the **Anti-Spoofing SIWE in-band** proof chain.
+
+The Poly1305 authentication tag is embedded inside `ciphertext` by NaCl's `secretbox`. A single altered bit — anywhere in the 150-byte header, in the message, or in the tag — causes decryption to fail before any plaintext is produced.
+
+`mac_hint` is not a MAC. It is a routing hint derived from the nonce.
 
 #### ④ Origin seal — `timestamp`
 
@@ -228,17 +240,32 @@ signingKey  = HKDF(seed, "whispery/signing/v1")   // 32 bytes
 
 Proves that the holder of the Whispery identity bound to `sender_pk` built this exact envelope with this exact content and timestamp. Any modification to any outer field invalidates the signature.
 
-**Verification — in-band (`openGroupEnvelope`):**
+**Verification — three-stage chain (`openGroupEnvelope`):**
 
 ```
-plain         = secretbox.open(ciphertext, nonce, content_key)   // Poly1305 first
-signingPubKey = plain[0:33]                                       // extracted from layer ③
-message       = plain[33:]
-secp256k1.verify(signature, sha256(canonical), signingPubKey)
-  → false → throw "firma inválida", discard message
+plain           = secretbox.open(ciphertext, nonce, content_key)  // Poly1305 first
+realSenderPk    = plain[ 0: 32]
+signingPubKey   = plain[32: 65]
+ethAddress      = plain[65: 85]
+siweSignature   = plain[85:150]
+message         = plain[150:  ]
+
+// Stage 1 — SIWE: did ethAddress sign the canonical SIWE message?
+ecrecover(siweSignature, hash(siweMessage(ethAddress))) == ethAddress
+  → mismatch → throw "identidad falsa"
+
+// Stage 2 — Key derivation: are the declared keys children of that SIWE signature?
+seed     = sha256(siweSignature)
+expected = { x25519: nacl.box.keyPair(seed), signing: HKDF(seed, "whispery/signing/v1") }
+expected.x25519.publicKey  == realSenderPk   → mismatch → throw "falsificación de llaves detectada"
+expected.signingPubKey     == signingPubKey  → mismatch → throw "falsificación de llaves detectada"
+
+// Stage 3 — L0 outer signature: non-repudiation
+secp256k1.verify(envelope.signature, sha256(canonical_outer_fields), signingPubKey)
+  → false → throw "firma inválida"
 ```
 
-The signing public key never appears in the clear outside the ciphertext. Verification is always enforced — there is no opt-out. An attacker would need the sender's `ethPrivKey` to produce a valid `signingPubKey` + `signature` pair for any given message content.
+All three stages are always enforced — there is no opt-out. To forge a valid message claiming to be from Alice, an attacker would need Alice's Ethereum private key to produce a valid `siweSignature` for `ethAddress`. Without it, Stage 1 fails.
 
 ---
 
