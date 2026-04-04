@@ -1,12 +1,12 @@
 import { useState } from 'react'
-import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain } from 'wagmi'
+import { useAccount, useConnect, useDisconnect, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSwitchChain, useSignMessage } from 'wagmi'
 import { sepolia } from 'wagmi/chains'
 import { injected } from 'wagmi/connectors'
 import CryptoDemo from './CryptoDemo'
 import MessengerView from './MessengerView'
 import { NFT_ADDRESS, BACK_ADDRESS, NFT_ABI, BACK_ABI, TOKEN_NAMES, CHANNEL_ID } from './contracts'
 import { uploadJSON } from './core/ipfs'
-import { createWallet, createGroupChannel, DEMO_PRIVATE_KEYS } from './core/crypto'
+import { siweMessage, keysFromSig, createWallet, createGroupChannel, DEMO_PRIVATE_KEYS } from './core/crypto'
 
 // ── Palette (shared) ──────────────────────────────────────────────────────────
 const C = {
@@ -68,15 +68,19 @@ function LiveView() {
   const { writeContract, data: txHash } = useWriteContract()
   const { isLoading: txPending, isSuccess: txDone } =
     useWaitForTransactionReceipt({ hash: txHash })
+  const { signMessageAsync } = useSignMessage()
 
   const [publishing, setPublishing] = useState(false)
   const [publishError, setPublishError] = useState<string | null>(null)
 
   async function publishEEE() {
+    if (!address) return
     setPublishing(true)
     setPublishError(null)
     try {
-      const wA = createWallet(DEMO_PRIVATE_KEYS.A, 'Alice')
+      // Sign SIWE to derive Alice's actual x25519 key — same derivation as connect()
+      const sig = await signMessageAsync({ message: siweMessage(address) })
+      const wA = keysFromSig(sig, address)
       const wB = createWallet(DEMO_PRIVATE_KEYS.B, 'Bob')
       const wC = createWallet(DEMO_PRIVATE_KEYS.C, 'Charlie')
       const { eee } = createGroupChannel(wA, [wA, wB, wC], 'WHISP-001', 0)
