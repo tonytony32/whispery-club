@@ -1,0 +1,13 @@
+{
+  "name": "whispery-luma-oracle",
+  "version": "1.0.0",
+  "description": "Serverless oracle: Luma webhook → EAS attestation on Gnosis Chain",
+  "type": "commonjs",
+  "dependencies": {
+    "@ethereum-attestation-service/eas-sdk": "^2.7.0",
+    "ethers": "^6.13.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
