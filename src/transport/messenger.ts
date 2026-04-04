@@ -188,7 +188,9 @@ export class L1Messenger extends EventTarget {
         if (bytesToHex(realSenderPk) === bytesToHex(this.pubKey)) return
 
         const event = new CustomEvent('message', {
-          detail: { text, senderPk: l0.sender_pk, timestamp: l0.timestamp },
+          // realSenderPk is the actual X25519 pubkey decoded from inside the ciphertext
+          // (l0.sender_pk is the outer ephemeral key — random, not the real sender)
+          detail: { text, senderPk: bytesToHex(realSenderPk), timestamp: l0.timestamp, envelope: l0 },
         })
         this.dispatchEvent(event)
       } catch {

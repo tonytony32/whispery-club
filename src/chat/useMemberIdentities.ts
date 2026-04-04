@@ -20,6 +20,18 @@ export type AgentCard = {
   capabilities?: string[]
 }
 
+export type ReputationEntry = {
+  reviewer:    string   // eth address
+  score:       number   // int8, 1–5
+  feedbackURI: string   // ipfs:// URI
+  timestamp:   number   // unix seconds (from contract)
+}
+
+export type Reputation = {
+  entries:  ReputationEntry[]
+  avgScore: number | null   // arithmetic mean, null if no entries
+}
+
 export type MemberIdentity = {
   address:         string
   displayName:     string   // ENS name or truncated address
@@ -27,19 +39,24 @@ export type MemberIdentity = {
   ensip25Verified: boolean  // bidirectional ENS ↔ ERC-8004 check passed
   agentId:         number | null
   agentCard:       AgentCard | null
+  reputation:      Reputation | null   // null for non-agents; fetched once per session
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const ERC8004_REGISTRY = (
-  (import.meta as unknown as { env: Record<string, string | undefined> }).env.VITE_ERC8004_REGISTRY
-  ?? '0x7177a6867296406881E20d6647232314736Dd09A'
-)
+const ENV = (import.meta as unknown as { env: Record<string, string | undefined> }).env
+
+const ERC8004_REGISTRY = ENV.VITE_ERC8004_REGISTRY ?? '0x7177a6867296406881E20d6647232314736Dd09A'
+const REPUTATION_REGISTRY = ENV.VITE_ERC8004_REPUTATION ?? '0xB5048e3ef1DA4E04deB6f7d0423D06F63869e322'
 
 const ERC8004_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
   'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)',
   'function tokenURI(uint256 agentId) view returns (string)',
+]
+
+const REPUTATION_ABI = [
+  'function getFeedback(uint256 agentId) external view returns (tuple(address reviewer, int8 score, string feedbackURI, uint256 timestamp)[])',
 ]
 
 const MAINNET_RPCS: string[] = [
@@ -118,6 +135,7 @@ async function resolveIdentity(address: string): Promise<MemberIdentity> {
     ensip25Verified: false,
     agentId:         null,
     agentCard:       null,
+    reputation:      null,
   }
 
   try {
@@ -152,6 +170,23 @@ async function resolveIdentity(address: string): Promise<MemberIdentity> {
             base.agentCard = await fetchAgentCard(agentUri)
           }
         } catch { /* ENSIP-25 check failed — agent stays unverified */ }
+
+      // ── Step 5: fetch reputation (cached per session via identityCache) ──
+      try {
+        const repRegistry = new ethers.Contract(REPUTATION_REGISTRY, REPUTATION_ABI, sepProvider)
+        const raw: Array<{ reviewer: string; score: bigint; feedbackURI: string; timestamp: bigint }>
+          = await repRegistry.getFeedback(agentId)
+        const entries: ReputationEntry[] = raw.map(r => ({
+          reviewer:    r.reviewer,
+          score:       Number(r.score),
+          feedbackURI: r.feedbackURI,
+          timestamp:   Number(r.timestamp),
+        }))
+        const avgScore = entries.length > 0
+          ? entries.reduce((s, e) => s + e.score, 0) / entries.length
+          : null
+        base.reputation = { entries, avgScore }
+      } catch { /* silent — reputation not critical */ }
       }
     }
   } catch { /* any failure → return base (human, truncated address) */ }

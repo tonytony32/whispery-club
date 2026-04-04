@@ -6,9 +6,10 @@ import { useDemoMessenger } from './transport/useDemoMessenger'
 import { BACK_ADDRESS, BACK_ABI, CHANNEL_ID, GROUP_NAME } from './contracts'
 import { DEMO_PRIVATE_KEYS, createWallet } from './core/crypto'
 import type { NodeStatus } from './transport/node'
-import { useMemberIdentities } from './chat/useMemberIdentities'
-import AgentBanner from './chat/AgentBanner'
-import MemberPill from './chat/MemberPill'
+import { useMemberIdentities, type MemberIdentity } from './chat/useMemberIdentities'
+import AgentBanner    from './chat/AgentBanner'
+import MemberPill     from './chat/MemberPill'
+import AgentFeedback  from './chat/AgentFeedback'
 
 const C = {
   bg:        '#0b0b0e',
@@ -83,7 +84,7 @@ function LogPanel({ logs, accent }: { logs: string[]; accent: string }) {
 
 function ParticipantPanel({
   label, accent, isDemo, pointer, eeeEpoch, result, logs,
-  memberIdentities, pubkeyToAddress, channelId,
+  memberIdentities, pubkeyToAddress, channelId, humanAddress,
 }: {
   label: string
   accent: string
@@ -95,11 +96,14 @@ function ParticipantPanel({
   memberIdentities: ReturnType<typeof useMemberIdentities>
   pubkeyToAddress: Map<string, string>
   channelId: string
+  humanAddress: string
 }) {
   const { status, signing, myPubKey, messages, connect, send, signError } = result
   const [draft, setDraft]         = useState('')
   const [sending, setSending]     = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+  const [hoveredMsgIdx, setHoveredMsgIdx] = useState<number | null>(null)
+  const [ratingAgent,   setRatingAgent]   = useState<MemberIdentity | null>(null)
   const threadRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -151,6 +155,32 @@ function ParticipantPanel({
             {' · '}epoch {String(eeeEpoch)}
           </div>
         }
+
+        {/* Channel member list */}
+        {memberIdentities.size > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6, alignItems: 'center' }}>
+            {[...memberIdentities.values()].map(m => (
+              <div key={m.address} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <MemberPill
+                  identity={m}
+                  onRate={m.ensip25Verified ? () => setRatingAgent(m) : undefined}
+                />
+                {m.ensip25Verified && (
+                  <button
+                    onClick={() => setRatingAgent(m)}
+                    style={{
+                      ...mono, fontSize: 9, background: 'none',
+                      border: `1px solid ${C.dim}`, borderRadius: 3,
+                      padding: '1px 6px', color: C.accent, cursor: 'pointer',
+                    }}
+                  >
+                    Valorar
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
         {status === 'disconnected' &&
           <div style={{ ...mono, fontSize: 11, color: C.orange }}>
             All Waku peers dropped — messages paused.
@@ -218,11 +248,17 @@ function ParticipantPanel({
               const senderLabel  = msg.direction === 'out'
                 ? label.toLowerCase()
                 : (senderIdent?.displayName ?? 'group')
+              const isAgentMsg   = msg.direction === 'in' && senderIdent?.ensip25Verified
               return (
-                <div key={i} style={{
-                  display: 'flex',
-                  justifyContent: msg.direction === 'out' ? 'flex-end' : 'flex-start',
-                }}>
+                <div
+                  key={i}
+                  onMouseEnter={() => isAgentMsg ? setHoveredMsgIdx(i) : undefined}
+                  onMouseLeave={() => setHoveredMsgIdx(null)}
+                  style={{
+                    display: 'flex', position: 'relative',
+                    justifyContent: msg.direction === 'out' ? 'flex-end' : 'flex-start',
+                  }}
+                >
                   <div style={{
                     background: msg.direction === 'out' ? accent : C.surface,
                     color: C.text,
@@ -235,13 +271,29 @@ function ParticipantPanel({
                       display: 'flex', alignItems: 'center', gap: 4,
                     }}>
                       {senderIdent
-                        ? <MemberPill identity={senderIdent} />
+                        ? <MemberPill identity={senderIdent} onRate={senderIdent.ensip25Verified ? () => setRatingAgent(senderIdent) : undefined} />
                         : <span>{senderLabel}</span>
                       }
                       <span>· {new Date(msg.at).toLocaleTimeString()}</span>
                     </div>
                     {msg.text}
                   </div>
+                  {/* Star icon — only visible on hover for verified agent messages */}
+                  {isAgentMsg && hoveredMsgIdx === i && (
+                    <button
+                      onClick={() => setRatingAgent(senderIdent!)}
+                      title="Valorar este agente"
+                      style={{
+                        position: 'absolute', right: -24, top: '50%',
+                        transform: 'translateY(-50%)',
+                        background: 'none', border: 'none',
+                        color: C.yellow, cursor: 'pointer', fontSize: 14,
+                        padding: 2, lineHeight: 1,
+                      }}
+                    >
+                      ☆
+                    </button>
+                  )}
                 </div>
               )
             })
@@ -279,6 +331,18 @@ function ParticipantPanel({
 
       {/* Log */}
       <LogPanel logs={logs} accent={accent} />
+
+      {/* Reputation feedback modal */}
+      {ratingAgent && (
+        <AgentFeedback
+          identity={ratingAgent}
+          messages={messages}
+          channelId={channelId}
+          epoch={Number(eeeEpoch)}
+          humanAddress={humanAddress}
+          onClose={() => setRatingAgent(null)}
+        />
+      )}
     </div>
   )
 }
@@ -351,14 +415,14 @@ export default function MessengerView() {
         pointer={pointer} eeeEpoch={eeeEpoch}
         result={aliceResult} logs={aliceLogs}
         memberIdentities={memberIdentities} pubkeyToAddress={pubkeyToAddress}
-        channelId={CHANNEL_ID}
+        channelId={CHANNEL_ID} humanAddress={address ?? ''}
       />
       <ParticipantPanel
         label="Betty" accent={C.orange} isDemo={true}
         pointer={pointer} eeeEpoch={eeeEpoch}
         result={bettyResult} logs={bettyLogs}
         memberIdentities={memberIdentities} pubkeyToAddress={pubkeyToAddress}
-        channelId={CHANNEL_ID}
+        channelId={CHANNEL_ID} humanAddress={address ?? ''}
       />
     </div>
   )

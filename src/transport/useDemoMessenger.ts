@@ -4,6 +4,7 @@ import { createWallet, accessGroupChannel, type EEE } from '../core/crypto'
 import { fetchJSON } from '../core/ipfs'
 import { createWakuNode, type NodeStatus } from './node'
 import { L1Messenger, channelTopic } from './messenger'
+import type { Envelope } from '../core/crypto'
 import type { ChatMessage, UseMessengerResult } from './useMessenger'
 
 function ts() {
@@ -61,8 +62,8 @@ export function useDemoMessenger(
     messengerRef.current = messenger
 
     messenger.addEventListener('message', (e) => {
-      const { text, senderPk, timestamp } = (e as CustomEvent<{ text: string; senderPk?: string; timestamp: number }>).detail
-      setMessages(prev => [...prev, { text, direction: 'in', at: timestamp ?? Date.now(), senderPk }])
+      const { text, senderPk, timestamp, envelope } = (e as CustomEvent<{ text: string; senderPk?: string; timestamp: number; envelope?: Envelope }>).detail
+      setMessages(prev => [...prev, { text, direction: 'in', at: timestamp ?? Date.now(), senderPk, envelope }])
     })
 
     const topic = channelTopic(channelIdRef.current!)

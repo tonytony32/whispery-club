@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useSignMessage } from 'wagmi'
 import type { LightNode } from '@waku/sdk'
-import { siweMessage, keysFromSig, accessGroupChannel, type EEE } from '../core/crypto'
+import { siweMessage, keysFromSig, accessGroupChannel, type EEE, type Envelope } from '../core/crypto'
 import type { Wallet } from '../core/crypto'
 import { fetchJSON } from '../core/ipfs'
 import { createWakuNode, type NodeStatus } from './node'
@@ -12,7 +12,8 @@ export interface ChatMessage {
   text:      string
   direction: 'in' | 'out'
   at:        number
-  senderPk?: string   // hex X25519 pubkey of sender (inbound only)
+  senderPk?: string    // hex X25519 pubkey of sender (inbound only)
+  envelope?: Envelope  // raw L0 envelope — used for reputation evidence (inbound only)
 }
 
 export interface UseMessengerResult {
@@ -84,8 +85,8 @@ export function useMessenger(
     messengerRef.current = messenger
 
     messenger.addEventListener('message', (e) => {
-      const { text, senderPk, timestamp } = (e as CustomEvent<{ text: string; senderPk?: string; timestamp: number }>).detail
-      setMessages(prev => [...prev, { text, direction: 'in', at: timestamp ?? Date.now(), senderPk }])
+      const { text, senderPk, timestamp, envelope } = (e as CustomEvent<{ text: string; senderPk?: string; timestamp: number; envelope?: Envelope }>).detail
+      setMessages(prev => [...prev, { text, direction: 'in', at: timestamp ?? Date.now(), senderPk, envelope }])
     })
 
     if (contentKeyRef.current && channelIdRef.current) {
