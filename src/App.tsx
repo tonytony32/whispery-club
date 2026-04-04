@@ -5,6 +5,7 @@ import { injected } from 'wagmi/connectors'
 import CryptoDemo from './CryptoDemo'
 import MessengerView from './MessengerView'
 import Omnibar from './omnibar/Omnibar'
+import OpenClawObserver from './openclaw'
 import { NFT_ADDRESS, BACK_ADDRESS, NFT_ABI, BACK_ABI, TOKEN_NAMES, CHANNEL_ID } from './contracts'
 import { uploadJSON } from './core/ipfs'
 import { siweMessage, keysFromSig, createWallet, createGroupChannel, DEMO_PRIVATE_KEYS } from './core/crypto'
@@ -297,7 +298,7 @@ function Row({ label, value, color }: { label: string; value: string; color: str
 
 // ── Tab toggle ────────────────────────────────────────────────────────────────
 
-type Tab = 'omnibar' | 'messenger' | 'demo'
+type Tab = 'omnibar' | 'messenger' | 'demo' | 'openclaw'
 
 // ── Persistent wallet pill ────────────────────────────────────────────────────
 
@@ -387,13 +388,15 @@ export default function App() {
           <TabBtn id="omnibar">⬡ Omnibar</TabBtn>
           <TabBtn id="messenger">⬡ Messenger</TabBtn>
           <TabBtn id="demo">⬡ Crypto Demo</TabBtn>
+          <TabBtn id="openclaw">⬡ OpenClaw</TabBtn>
         </div>
         <WalletPill />
       </div>
 
       {/* Body */}
-      {tab === 'omnibar'   ? <Omnibar />       :
-       tab === 'messenger' ? <MessengerView /> :
+      {tab === 'omnibar'   ? <Omnibar />             :
+       tab === 'messenger' ? <MessengerView />       :
+       tab === 'openclaw'  ? <OpenClawObserver />    :
                              <CryptoDemo />}
     </div>
   )
