@@ -33,12 +33,6 @@ export async function verifyENSIP25(
 ): Promise<ENSIP25Result> {
   const textKey = buildTextKey(registryEncoded, agentId)
 
-  // Demo mode: return verified without hitting RPC
-  if (import.meta.env.VITE_OPENCLAW_DEMO === 'true') {
-    return { ensName, agentId, registry: registryEncoded, textKey,
-             status: 'verified', rawValue: '1' }
-  }
-
   try {
     const { ethers } = await import('ethers')
     const rpcUrls = [
