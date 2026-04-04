@@ -65,7 +65,9 @@ export default function ENSIdentityPanel() {
               }}>
                 tokenId #{agent.tokenId}
               </span>
-              <ENSIP25Badge ensName={agent.ensName} tokenId={agent.tokenId} />
+              {!agent.isHuman && (
+                <ENSIP25Badge ensName={agent.ensName} tokenId={agent.tokenId} />
+              )}
             </div>
             <span style={{ ...mono, fontSize: 9, color: '#475569' }}>
               {agent.wallet.slice(0, 6)}…{agent.wallet.slice(-4)}
