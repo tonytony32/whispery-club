@@ -9,9 +9,10 @@ import { L1Messenger, channelTopic } from './messenger'
 import nacl from 'tweetnacl'
 
 export interface ChatMessage {
-  text: string
+  text:      string
   direction: 'in' | 'out'
-  at: number
+  at:        number
+  senderPk?: string   // hex X25519 pubkey of sender (inbound only)
 }
 
 export interface UseMessengerResult {
@@ -83,8 +84,8 @@ export function useMessenger(
     messengerRef.current = messenger
 
     messenger.addEventListener('message', (e) => {
-      const { text, timestamp } = (e as CustomEvent<{ text: string; timestamp: number }>).detail
-      setMessages(prev => [...prev, { text, direction: 'in', at: timestamp ?? Date.now() }])
+      const { text, senderPk, timestamp } = (e as CustomEvent<{ text: string; senderPk?: string; timestamp: number }>).detail
+      setMessages(prev => [...prev, { text, direction: 'in', at: timestamp ?? Date.now(), senderPk }])
     })
 
     if (contentKeyRef.current && channelIdRef.current) {

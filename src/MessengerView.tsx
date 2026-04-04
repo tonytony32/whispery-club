@@ -1,11 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useAccount, useReadContract } from 'wagmi'
 import { bytesToHex } from '@noble/hashes/utils'
 import { useMessenger, type UseMessengerResult, type ChatMessage } from './transport/useMessenger'
 import { useDemoMessenger } from './transport/useDemoMessenger'
 import { BACK_ADDRESS, BACK_ABI, CHANNEL_ID, GROUP_NAME } from './contracts'
-import { DEMO_PRIVATE_KEYS } from './core/crypto'
+import { DEMO_PRIVATE_KEYS, createWallet } from './core/crypto'
 import type { NodeStatus } from './transport/node'
+import { useMemberIdentities } from './chat/useMemberIdentities'
+import AgentBanner from './chat/AgentBanner'
+import MemberPill from './chat/MemberPill'
 
 const C = {
   bg:        '#0b0b0e',
@@ -80,6 +83,7 @@ function LogPanel({ logs, accent }: { logs: string[]; accent: string }) {
 
 function ParticipantPanel({
   label, accent, isDemo, pointer, eeeEpoch, result, logs,
+  memberIdentities, pubkeyToAddress, channelId,
 }: {
   label: string
   accent: string
@@ -88,6 +92,9 @@ function ParticipantPanel({
   eeeEpoch: bigint
   result: UseMessengerResult
   logs: string[]
+  memberIdentities: ReturnType<typeof useMemberIdentities>
+  pubkeyToAddress: Map<string, string>
+  channelId: string
 }) {
   const { status, signing, myPubKey, messages, connect, send, signError } = result
   const [draft, setDraft]         = useState('')
@@ -190,6 +197,14 @@ function ParticipantPanel({
         )}
       </div>
 
+      {/* Agent banner */}
+      {(() => {
+        const agents = [...memberIdentities.values()].filter(m => m.isAgent)
+        return agents.length > 0
+          ? <AgentBanner agents={agents} channelId={channelId} />
+          : null
+      })()}
+
       {/* Thread */}
       <div ref={threadRef} style={{
         ...card, flex: 1, height: 300, overflowY: 'auto',
@@ -197,26 +212,39 @@ function ParticipantPanel({
       }}>
         {messages.length === 0
           ? <span style={{ ...mono, color: C.dim, fontSize: 11, margin: 'auto' }}>No messages yet</span>
-          : [...messages].sort((a, b) => a.at - b.at).map((msg: ChatMessage, i: number) => (
-            <div key={i} style={{
-              display: 'flex',
-              justifyContent: msg.direction === 'out' ? 'flex-end' : 'flex-start',
-            }}>
-              <div style={{
-                background: msg.direction === 'out' ? accent : C.surface,
-                color: C.text,
-                border: `1px solid ${msg.direction === 'out' ? accent : C.border}`,
-                borderRadius: 8, padding: '6px 10px',
-                maxWidth: '85%', wordBreak: 'break-word', ...mono,
-              }}>
-                <div style={{ fontSize: 10, marginBottom: 2,
-                  color: msg.direction === 'out' ? 'rgba(255,255,255,0.5)' : C.muted }}>
-                  {msg.direction === 'out' ? label.toLowerCase() : 'group'} · {new Date(msg.at).toLocaleTimeString()}
+          : [...messages].sort((a, b) => a.at - b.at).map((msg: ChatMessage, i: number) => {
+              const senderAddr   = msg.senderPk ? pubkeyToAddress.get(msg.senderPk) : undefined
+              const senderIdent  = senderAddr ? memberIdentities.get(senderAddr) : undefined
+              const senderLabel  = msg.direction === 'out'
+                ? label.toLowerCase()
+                : (senderIdent?.displayName ?? 'group')
+              return (
+                <div key={i} style={{
+                  display: 'flex',
+                  justifyContent: msg.direction === 'out' ? 'flex-end' : 'flex-start',
+                }}>
+                  <div style={{
+                    background: msg.direction === 'out' ? accent : C.surface,
+                    color: C.text,
+                    border: `1px solid ${msg.direction === 'out' ? accent : C.border}`,
+                    borderRadius: 8, padding: '6px 10px',
+                    maxWidth: '85%', wordBreak: 'break-word', ...mono,
+                  }}>
+                    <div style={{ fontSize: 10, marginBottom: 2,
+                      color: msg.direction === 'out' ? 'rgba(255,255,255,0.5)' : C.muted,
+                      display: 'flex', alignItems: 'center', gap: 4,
+                    }}>
+                      {senderIdent
+                        ? <MemberPill identity={senderIdent} />
+                        : <span>{senderLabel}</span>
+                      }
+                      <span>· {new Date(msg.at).toLocaleTimeString()}</span>
+                    </div>
+                    {msg.text}
+                  </div>
                 </div>
-                {msg.text}
-              </div>
-            </div>
-          ))
+              )
+            })
         }
       </div>
 
@@ -255,6 +283,17 @@ function ParticipantPanel({
   )
 }
 
+// ── Demo member addresses (stable — declared outside component) ───────────────
+
+const DEMO_ADDRESSES = [
+  '0x50b86669634641D9D9ecB2aaEdC18f5d2644f65c',  // Alice
+  '0xBF0c2136430053e6839113Abac2E55DBeB0E80a7',  // Betty
+  '0x055476B69029367CF0E26eC784FB456Ed8ebcA00',  // Caroline
+]
+
+// Betty's X25519 pubkey is deterministic — compute once at module level
+const BETTY_PUBKEY_HEX = bytesToHex(createWallet(DEMO_PRIVATE_KEYS.B, 'Betty').x25519.publicKey)
+
 // ── Main split view ───────────────────────────────────────────────────────────
 
 export default function MessengerView() {
@@ -274,6 +313,20 @@ export default function MessengerView() {
 
   const aliceResult = useMessenger(address, pointer, 'Alice', addAliceLog)
   const bettyResult = useDemoMessenger(DEMO_PRIVATE_KEYS.B, 'Betty', pointer, addBettyLog)
+
+  // ── Member identity resolution ───────────────────────────────────────────────
+
+  const memberIdentities = useMemberIdentities(DEMO_ADDRESSES)
+
+  // Map X25519 pubkey (hex) → eth address — Betty is static, Alice resolves after connect
+  const pubkeyToAddress = useMemo<Map<string, string>>(() => {
+    const m = new Map<string, string>()
+    m.set(BETTY_PUBKEY_HEX, DEMO_ADDRESSES[1])
+    if (aliceResult.myPubKey) {
+      m.set(bytesToHex(aliceResult.myPubKey), DEMO_ADDRESSES[0])
+    }
+    return m
+  }, [aliceResult.myPubKey])
 
   if (!address) {
     return (
@@ -297,11 +350,15 @@ export default function MessengerView() {
         label="Alice" accent={C.accent} isDemo={false}
         pointer={pointer} eeeEpoch={eeeEpoch}
         result={aliceResult} logs={aliceLogs}
+        memberIdentities={memberIdentities} pubkeyToAddress={pubkeyToAddress}
+        channelId={CHANNEL_ID}
       />
       <ParticipantPanel
         label="Betty" accent={C.orange} isDemo={true}
         pointer={pointer} eeeEpoch={eeeEpoch}
         result={bettyResult} logs={bettyLogs}
+        memberIdentities={memberIdentities} pubkeyToAddress={pubkeyToAddress}
+        channelId={CHANNEL_ID}
       />
     </div>
   )
