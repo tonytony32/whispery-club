@@ -202,8 +202,20 @@ export default function Omnibar() {
         return
       }
 
-      const provider = new ethers.BrowserProvider(eth)
+      const provider      = new ethers.BrowserProvider(eth)
       await provider.send('eth_requestAccounts', [])
+      const signer        = await provider.getSigner()
+      const connectedAddr = (await signer.getAddress()).toLowerCase()
+
+      // Verify the connected wallet IS the ENS name owner
+      if (connectedAddr !== resolved.toLowerCase()) {
+        setEnsError(
+          `This ENS name resolves to a different wallet.\n` +
+          `Connected: ${truncateAddress(connectedAddr)} · ` +
+          `Expected: ${truncateAddress(resolved)}`
+        )
+        return
+      }
 
       const nft     = new ethers.Contract(WHISPERY_NFT_ADDRESS, ERC721_ABI, provider)
       const balance = await nft.balanceOf(resolved)
