@@ -148,10 +148,22 @@ async function resolveIdentity(address: string): Promise<MemberIdentity> {
     const sepProvider = await sepoliaProvider()
     const registry    = new ethers.Contract(ERC8004_REGISTRY, ERC8004_ABI, sepProvider)
 
-    // balanceOf may return 0x if the registry isn't deployed or doesn't implement
-    // the function — treat any failure as zero (not an agent).
+    // Use provider.call() instead of registry.balanceOf() — when the contract isn't
+    // deployed the node returns 0x, and ethers v6 logs BAD_DATA to console before
+    // throwing even when caught. Raw call() returns 0x silently, no logging.
+    const BALANCE_OF_IFACE = new ethers.Interface([
+      'function balanceOf(address) view returns (uint256)',
+    ])
     let balance = 0n
-    try { balance = await registry.balanceOf(address) } catch { /* not an agent */ }
+    try {
+      const raw = await sepProvider.call({
+        to:   ERC8004_REGISTRY,
+        data: BALANCE_OF_IFACE.encodeFunctionData('balanceOf', [address]),
+      })
+      if (raw && raw !== '0x') {
+        balance = BALANCE_OF_IFACE.decodeFunctionResult('balanceOf', raw)[0] as bigint
+      }
+    } catch { /* RPC failure — treat as non-agent */ }
 
     if (balance > 0n) {
       const agentId: bigint = await registry.tokenOfOwnerByIndex(address, 0)
