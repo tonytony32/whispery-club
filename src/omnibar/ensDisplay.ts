@@ -20,12 +20,14 @@ export function truncateAddress(address: string): string {
   return address.slice(0, 6) + '…' + address.slice(-4)
 }
 
+// staticNetwork: skip ethers v6 auto-detection (no extra eth_chainId call,
+// no internal "retry in 1s" loop that blocks the UI).
+const MAINNET = ethers.Network.from(1)
+
 async function mainnetProvider(): Promise<ethers.JsonRpcProvider> {
   for (const url of MAINNET_RPCS) {
     try {
-      const p = new ethers.JsonRpcProvider(url)
-      await p.getNetwork() // quick liveness check
-      return p
+      return new ethers.JsonRpcProvider(url, MAINNET, { staticNetwork: MAINNET })
     } catch { /* try next */ }
   }
   throw new Error('All mainnet RPCs unavailable')

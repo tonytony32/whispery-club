@@ -53,12 +53,14 @@ export function calcScore(
 // ── Live score fetch ──────────────────────────────────────────────────────────
 
 /** Read current reputation from the registry. Returns null on any RPC failure. */
+const SEPOLIA_NET = ethers.Network.from(11155111)
+
 export async function fetchRepScore(
   agentId: number,
 ): Promise<{ avg: number; count: number } | null> {
   for (const url of SEPOLIA_RPCS) {
     try {
-      const provider = new ethers.JsonRpcProvider(url)
+      const provider = new ethers.JsonRpcProvider(url, SEPOLIA_NET, { staticNetwork: SEPOLIA_NET })
       const registry = new ethers.Contract(REPUTATION_REGISTRY, GET_FEEDBACK_ABI, provider)
       const raw: Array<{ score: bigint }> = await registry.getFeedback(agentId)
       const count = raw.length

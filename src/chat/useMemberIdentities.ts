@@ -78,12 +78,13 @@ const identityCache = new Map<string, MemberIdentity>()
 
 // ── Provider helpers ──────────────────────────────────────────────────────────
 
+const MAINNET_NET = ethers.Network.from(1)
+const SEPOLIA_NET = ethers.Network.from(11155111)
+
 async function mainnetProvider(): Promise<ethers.JsonRpcProvider> {
   for (const url of MAINNET_RPCS) {
     try {
-      const p = new ethers.JsonRpcProvider(url)
-      await p.getNetwork()
-      return p
+      return new ethers.JsonRpcProvider(url, MAINNET_NET, { staticNetwork: MAINNET_NET })
     } catch { /* try next */ }
   }
   throw new Error('All mainnet RPCs unavailable')
@@ -92,9 +93,7 @@ async function mainnetProvider(): Promise<ethers.JsonRpcProvider> {
 async function sepoliaProvider(): Promise<ethers.JsonRpcProvider> {
   for (const url of SEPOLIA_RPCS) {
     try {
-      const p = new ethers.JsonRpcProvider(url)
-      await p.getNetwork()
-      return p
+      return new ethers.JsonRpcProvider(url, SEPOLIA_NET, { staticNetwork: SEPOLIA_NET })
     } catch { /* try next */ }
   }
   throw new Error('All Sepolia RPCs unavailable')

@@ -74,16 +74,16 @@ function syncClassify(v: string): InputKind {
   return 'unrecognised'
 }
 
+const SEPOLIA_NET = ethers.Network.from(11155111)
+
 async function asyncClassifyAddress(address: string): Promise<'nft-address' | 'eoa-address'> {
-  // Try eth_getCode via public Sepolia RPCs
   for (const url of SEPOLIA_RPCS) {
     try {
-      const provider = new ethers.JsonRpcProvider(url)
+      const provider = new ethers.JsonRpcProvider(url, SEPOLIA_NET, { staticNetwork: SEPOLIA_NET })
       const code = await provider.getCode(address)
       return code !== '0x' ? 'nft-address' : 'eoa-address'
     } catch { /* try next */ }
   }
-  // If all RPCs fail, fall back to assuming contract (better demo UX)
   return 'nft-address'
 }
 
@@ -212,7 +212,7 @@ export default function Omnibar() {
       let isContract = false
       for (const url of SEPOLIA_RPCS) {
         try {
-          const rpc  = new ethers.JsonRpcProvider(url)
+          const rpc  = new ethers.JsonRpcProvider(url, SEPOLIA_NET, { staticNetwork: SEPOLIA_NET })
           const code = await rpc.getCode(resolved)
           isContract = code !== '0x'
           break
