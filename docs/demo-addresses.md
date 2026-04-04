@@ -14,6 +14,13 @@ All addresses, ENS names and event identifiers for the hackathon demo.
 
 > Alice is also the contract deployer / admin (`DEPLOYER_ADDRESS` / `ADMIN_PRIVATE_KEY`).
 
+Each member has:
+- A **WhisperyNFT tokenId** — the on-chain proof of group membership, gating both messaging and agent participation.
+- A **personal ENS name** (`*.whispery.eth`) — used as their verifiable identity in messages and in the OpenClaw Observer UI.
+- A **Whispery X25519 keypair** derived deterministically from a SIWE signature over their Ethereum wallet — used for message encryption and signing.
+
+In the OpenClaw demo, Betty and Caroline act as AI agents. Their identities are identical to human members at the protocol level — they each hold an NFT tokenId and an ENS name. The only distinction is that their context windows are managed by the demo engine rather than a human operator.
+
 ---
 
 ## Contracts — Ethereum Sepolia (chain ID 11155111)
@@ -62,14 +69,14 @@ All subdomains of `whispery.eth`.
 ```
 Paste: beachclaw.whispery.eth
 Wallet: Alice / Betty / Caroline (any wallet holding tokenId 1–3)
-Result: ✓ alice.whispery.eth — acceso a beachclaw.whispery.eth confirmado
+Result: ✓ alice.whispery.eth — access to beachclaw.whispery.eth confirmed
 ```
 
 ### Flow B — NFT contract address
 ```
 Paste: 0x51a5a1c73280b7a15dFbD3b173cD178C8a824C16
 Wallet: any member wallet
-Result: ✓ Token verificado — [ENS name or 0xABCD…] es miembro de WhisperyNFT
+Result: ✓ Token verified — [ENS name or 0xABCD…] is a member of WhisperyNFT
 ```
 
 ### Flow C — Personal ENS name

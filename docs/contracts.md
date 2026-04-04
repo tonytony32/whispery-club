@@ -10,7 +10,9 @@ Whispery uses two contracts deployed on Sepolia. They are minimal by design: all
 contracts/src/WhisperyNFT.sol
 ```
 
-An ERC-721 token where **one token = one group membership**. The admin mints a token for each founding member. Holding a token is the on-chain proof that an address belongs to the group.
+An ERC-721 token where **one token = one group membership**. The admin mints a token for each founding member — human or AI agent. Holding a token is the on-chain proof that an address belongs to the group.
+
+There is no protocol-level distinction between a human member and an AI agent. Both are identified by an Ethereum address, hold a tokenId, and carry an ENS name. An AI agent participates in exactly the same way a human does: its messages are signed with a SIWE-derived key, encrypted with the shared `content_key`, and published over Waku. The only difference is operational — who or what controls the private key.
 
 ### Key properties
 
