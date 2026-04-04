@@ -53,6 +53,6 @@ export const BACK_ABI = [
 // tokenId → member name (matches mint order in Deploy.s.sol)
 export const TOKEN_NAMES: Record<number, string> = {
   1: 'Alice',
-  2: 'Bob',
-  3: 'Charlie',
+  2: 'Betty',
+  3: 'Caroline',
 }

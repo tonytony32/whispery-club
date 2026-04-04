@@ -81,8 +81,8 @@ function LiveView() {
       // Sign SIWE to derive Alice's actual x25519 key — same derivation as connect()
       const sig = await signMessageAsync({ message: siweMessage(address) })
       const wA = keysFromSig(sig, address)
-      const wB = createWallet(DEMO_PRIVATE_KEYS.B, 'Bob')
-      const wC = createWallet(DEMO_PRIVATE_KEYS.C, 'Charlie')
+      const wB = createWallet(DEMO_PRIVATE_KEYS.B, 'Betty')
+      const wC = createWallet(DEMO_PRIVATE_KEYS.C, 'Caroline')
       const { eee } = createGroupChannel(wA, [wA, wB, wC], 'WHISP-001', 0)
 
       const pointer = await uploadJSON(eee, `whispery-eee-epoch-${eee.epoch}`)

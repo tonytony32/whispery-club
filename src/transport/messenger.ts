@@ -27,7 +27,7 @@
 
 import { createEncoder, createDecoder } from '@waku/sdk'
 import type { LightNode } from '@waku/sdk'
-import { StaticShardingRoutingInfo } from '@waku/utils'
+import { AutoShardingRoutingInfo } from '@waku/utils'
 import nacl from 'tweetnacl'
 import { bytesToHex } from '@noble/hashes/utils'
 import { encode as encodeEnvelope, decode as decodeEnvelope } from './proto/envelope'
@@ -40,11 +40,14 @@ import {
   type Wallet, type Envelope as L0Envelope,
 } from '../core/crypto'
 
-// Waku Network: cluster 1, all 8 shards (matches defaultBootstrap: true).
-// We pin to shard 0 for all Whispery content — the mac_hint + content topic
-// routing handles application-level delivery within the shard.
-const NETWORK_CONFIG = { clusterId: 1, shards: [0, 1, 2, 3, 4, 5, 6, 7] } as const
-const ROUTING_INFO   = StaticShardingRoutingInfo.fromShard(0, NETWORK_CONFIG)
+// Waku Network: cluster 1, 8 shards — matches DefaultNetworkConfig (AutoSharding).
+// createLightNode({ defaultBootstrap: true }) uses AutoSharding; encoders must match
+// or peerManager.getPeers filters to 0 peers → NO_PEER_AVAILABLE.
+const NETWORK_CONFIG = { clusterId: 1, numShardsInCluster: 8 } as const
+
+function routingFor(contentTopic: string) {
+  return AutoShardingRoutingInfo.fromContentTopic(contentTopic, NETWORK_CONFIG)
+}
 
 // ── Content topic helpers ─────────────────────────────────────────────────────
 
@@ -102,7 +105,7 @@ export class L1Messenger extends EventTarget {
    */
   async publish(targetPubKey: Uint8Array, message: string): Promise<void> {
     const topic   = neighborhoodTopic(targetPubKey)
-    const encoder = createEncoder({ contentTopic: topic, routingInfo: ROUTING_INFO })
+    const encoder = createEncoder({ contentTopic: topic, routingInfo: routingFor(topic) })
     const hint    = computeHint(targetPubKey)
 
     // Build a signed L0 Envelope — sender identity + timestamp + secp256k1 signature
@@ -127,7 +130,7 @@ export class L1Messenger extends EventTarget {
     message: string,
   ): Promise<void> {
     const topic    = channelTopic(channelId)
-    const encoder  = createEncoder({ contentTopic: topic, routingInfo: ROUTING_INFO })
+    const encoder  = createEncoder({ contentTopic: topic, routingInfo: routingFor(topic) })
     const hint     = computeChannelHint(fromHex(channelId))
     const l0       = createGroupEnvelope(this.wallet, contentKey, channelId, message, epoch)
     const data     = new TextEncoder().encode(JSON.stringify(l0))
@@ -143,7 +146,7 @@ export class L1Messenger extends EventTarget {
    */
   async subscribeGroup(channelId: string, contentKey: Uint8Array): Promise<void> {
     const topic    = channelTopic(channelId)
-    const decoder  = createDecoder(topic, ROUTING_INFO)
+    const decoder  = createDecoder(topic, routingFor(topic))
     const myHint   = computeChannelHint(fromHex(channelId))
 
     await this.node.filter.subscribe([decoder], (msg) => {
@@ -184,7 +187,7 @@ export class L1Messenger extends EventTarget {
    *   await messenger.subscribe()
    */
   async subscribe(): Promise<void> {
-    const decoder = createDecoder(this.myTopic, ROUTING_INFO)
+    const decoder = createDecoder(this.myTopic, routingFor(this.myTopic))
 
     await this.node.filter.subscribe([decoder], (msg) => {
       if (!msg.payload) return

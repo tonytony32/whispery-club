@@ -264,7 +264,7 @@ export default function MessengerView() {
   const pointer = eeePointer || undefined
 
   const aliceResult = useMessenger(address, pointer)
-  const bobResult   = useDemoMessenger(DEMO_PRIVATE_KEYS.B, 'Bob', pointer)
+  const bobResult   = useDemoMessenger(DEMO_PRIVATE_KEYS.B, 'Betty', pointer)
 
   if (!address) {
     return (
@@ -288,7 +288,7 @@ export default function MessengerView() {
           result={aliceResult}
         />
         <MessengerPanel
-          label="Bob"
+          label="Betty"
           accentColor={C.orange}
           isDemo={true}
           pointer={pointer}
