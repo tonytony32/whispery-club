@@ -81,20 +81,25 @@ const identityCache = new Map<string, MemberIdentity>()
 const MAINNET_NET = ethers.Network.from(1)
 const SEPOLIA_NET = ethers.Network.from(11155111)
 
-async function mainnetProvider(): Promise<ethers.JsonRpcProvider> {
+// Constructors with staticNetwork never throw — retry must happen at call-site.
+// These helpers just create a provider for a given URL.
+function makeMainnet(url: string) {
+  return new ethers.JsonRpcProvider(url, MAINNET_NET, { staticNetwork: MAINNET_NET })
+}
+function makeSepolia(url: string) {
+  return new ethers.JsonRpcProvider(url, SEPOLIA_NET, { staticNetwork: SEPOLIA_NET })
+}
+
+async function tryMainnet<T>(fn: (p: ethers.JsonRpcProvider) => Promise<T>): Promise<T> {
   for (const url of MAINNET_RPCS) {
-    try {
-      return new ethers.JsonRpcProvider(url, MAINNET_NET, { staticNetwork: MAINNET_NET })
-    } catch { /* try next */ }
+    try { return await fn(makeMainnet(url)) } catch { /* try next */ }
   }
   throw new Error('All mainnet RPCs unavailable')
 }
 
-async function sepoliaProvider(): Promise<ethers.JsonRpcProvider> {
+async function trySepolia<T>(fn: (p: ethers.JsonRpcProvider) => Promise<T>): Promise<T> {
   for (const url of SEPOLIA_RPCS) {
-    try {
-      return new ethers.JsonRpcProvider(url, SEPOLIA_NET, { staticNetwork: SEPOLIA_NET })
-    } catch { /* try next */ }
+    try { return await fn(makeSepolia(url)) } catch { /* try next */ }
   }
   throw new Error('All Sepolia RPCs unavailable')
 }
@@ -139,35 +144,31 @@ async function resolveIdentity(address: string): Promise<MemberIdentity> {
 
   try {
     // ── Step 1: reverse ENS lookup ───────────────────────────────────────────
-    const ensProvider = await mainnetProvider()
-    const ensName     = await ensProvider.lookupAddress(address)
+    const ensName = await tryMainnet(p => p.lookupAddress(address)).catch(() => null)
     if (ensName) base.displayName = ensName
 
     // ── Step 2: check ERC-8004 registry on Sepolia ───────────────────────────
-    const sepProvider = await sepoliaProvider()
-    const registry    = new ethers.Contract(ERC8004_REGISTRY, ERC8004_ABI, sepProvider)
-
-    // Use provider.call() instead of registry.balanceOf() — when the contract isn't
-    // deployed the node returns 0x, and ethers v6 logs BAD_DATA to console before
-    // throwing even when caught. Raw call() returns 0x silently, no logging.
+    // Use raw call() to avoid ethers v6 logging BAD_DATA when contract returns 0x.
     const BALANCE_OF_IFACE = new ethers.Interface([
       'function balanceOf(address) view returns (uint256)',
     ])
     let balance = 0n
     try {
-      const raw = await sepProvider.call({
+      const raw = await trySepolia(p => p.call({
         to:   ERC8004_REGISTRY,
         data: BALANCE_OF_IFACE.encodeFunctionData('balanceOf', [address]),
-      })
+      }))
       if (raw && raw !== '0x') {
         balance = BALANCE_OF_IFACE.decodeFunctionResult('balanceOf', raw)[0] as bigint
       }
-    } catch { /* RPC failure — treat as non-agent */ }
+    } catch { /* registry not deployed — treat as non-agent */ }
 
     if (balance > 0n) {
-      const agentId: bigint = await registry.tokenOfOwnerByIndex(address, 0)
-      base.agentId          = Number(agentId)
-      base.isAgent          = true // tentative — confirmed by ENSIP-25
+      const agentId: bigint = await trySepolia(p =>
+        new ethers.Contract(ERC8004_REGISTRY, ERC8004_ABI, p).tokenOfOwnerByIndex(address, 0)
+      )
+      base.agentId = Number(agentId)
+      base.isAgent = true // tentative — confirmed by ENSIP-25
 
       // ── Step 3: ENSIP-25 bidirectional verification ──────────────────────
       if (ensName) {
@@ -175,34 +176,41 @@ async function resolveIdentity(address: string): Promise<MemberIdentity> {
           const registryAddrLower = ERC8004_REGISTRY.toLowerCase().slice(2)
           const erc7930  = `0x00010000010114${registryAddrLower}`
           const textKey  = `agent-registration[${erc7930}][${agentId}]`
-          const resolver = await ensProvider.getResolver(ensName)
-          const textVal  = await resolver?.getText(textKey)
+          const textVal  = await tryMainnet(async p => {
+            const resolver = await p.getResolver(ensName)
+            return resolver?.getText(textKey) ?? null
+          })
 
           if (textVal) {
             base.ensip25Verified = true
-            // ── Step 4: fetch agent card from tokenURI ─────────────────────
-            const agentUri = await registry.tokenURI(agentId)
+            // ── Step 4: fetch agent card from tokenURI ───────────────────
+            const agentUri = await trySepolia(p =>
+              new ethers.Contract(ERC8004_REGISTRY, ERC8004_ABI, p).tokenURI(agentId)
+            )
             base.agentCard = await fetchAgentCard(agentUri)
           }
         } catch { /* ENSIP-25 check failed — agent stays unverified */ }
+      }
 
-      // ── Step 5: fetch reputation (cached per session via identityCache) ──
+      // ── Step 5: fetch reputation ─────────────────────────────────────────
       try {
-        const repRegistry = new ethers.Contract(REPUTATION_REGISTRY, REPUTATION_ABI, sepProvider)
         const raw: Array<{ reviewer: string; score: bigint; feedbackURI: string; timestamp: bigint }>
-          = await repRegistry.getFeedback(agentId)
+          = await trySepolia(p =>
+            new ethers.Contract(REPUTATION_REGISTRY, REPUTATION_ABI, p).getFeedback(agentId)
+          )
         const entries: ReputationEntry[] = raw.map(r => ({
           reviewer:    r.reviewer,
           score:       Number(r.score),
           feedbackURI: r.feedbackURI,
           timestamp:   Number(r.timestamp),
         }))
-        const avgScore = entries.length > 0
-          ? entries.reduce((s, e) => s + e.score, 0) / entries.length
-          : null
-        base.reputation = { entries, avgScore }
+        base.reputation = {
+          entries,
+          avgScore: entries.length > 0
+            ? entries.reduce((s, e) => s + e.score, 0) / entries.length
+            : null,
+        }
       } catch { /* silent — reputation not critical */ }
-      }
     }
   } catch { /* any failure → return base (human, truncated address) */ }
 

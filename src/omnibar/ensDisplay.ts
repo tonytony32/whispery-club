@@ -20,47 +20,46 @@ export function truncateAddress(address: string): string {
   return address.slice(0, 6) + '…' + address.slice(-4)
 }
 
-// staticNetwork: skip ethers v6 auto-detection (no extra eth_chainId call,
-// no internal "retry in 1s" loop that blocks the UI).
+// staticNetwork: skip ethers v6 auto-detection (no eth_chainId call,
+// no internal "retry in 1s" loop). Constructor never throws, so we retry
+// at the call-site level so each RPC is tried for the real operation.
 const MAINNET = ethers.Network.from(1)
 
-async function mainnetProvider(): Promise<ethers.JsonRpcProvider> {
-  for (const url of MAINNET_RPCS) {
-    try {
-      return new ethers.JsonRpcProvider(url, MAINNET, { staticNetwork: MAINNET })
-    } catch { /* try next */ }
-  }
-  throw new Error('All mainnet RPCs unavailable')
+function makeProvider(url: string): ethers.JsonRpcProvider {
+  return new ethers.JsonRpcProvider(url, MAINNET, { staticNetwork: MAINNET })
 }
 
 /**
  * Reverse-resolves an address to its ENS name.
- * Falls back to truncated address on any failure or missing name.
+ * Tries each RPC in turn; falls back to truncated address.
  */
 export async function resolveDisplayName(
   address: string,
   _provider?: ethers.BrowserProvider,
 ): Promise<string> {
   if (ensCache.has(address)) return ensCache.get(address)!
-  try {
-    const provider = await mainnetProvider()
-    const name     = await provider.lookupAddress(address)
-    const display  = name ?? truncateAddress(address)
-    ensCache.set(address, display)
-    return display
-  } catch {
-    const display = truncateAddress(address)
-    ensCache.set(address, display)
-    return display
+  for (const url of MAINNET_RPCS) {
+    try {
+      const name    = await makeProvider(url).lookupAddress(address)
+      const display = name ?? truncateAddress(address)
+      ensCache.set(address, display)
+      return display
+    } catch { /* RPC failed — try next */ }
   }
+  const display = truncateAddress(address)
+  ensCache.set(address, display)
+  return display
 }
 
-/** Forward-resolves an ENS name to an address. Returns null if not found. */
+/**
+ * Forward-resolves an ENS name to an address.
+ * Tries each RPC in turn; returns null if no record or all RPCs fail.
+ */
 export async function resolveENSName(name: string): Promise<string | null> {
-  try {
-    const provider = await mainnetProvider()
-    return await provider.resolveName(name)
-  } catch {
-    return null
+  for (const url of MAINNET_RPCS) {
+    try {
+      return await makeProvider(url).resolveName(name)
+    } catch { /* RPC failed — try next */ }
   }
+  return null
 }
