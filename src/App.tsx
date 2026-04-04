@@ -4,6 +4,7 @@ import { sepolia } from 'wagmi/chains'
 import { injected } from 'wagmi/connectors'
 import CryptoDemo from './CryptoDemo'
 import MessengerView from './MessengerView'
+import Omnibar from './omnibar/Omnibar'
 import { NFT_ADDRESS, BACK_ADDRESS, NFT_ABI, BACK_ABI, TOKEN_NAMES, CHANNEL_ID } from './contracts'
 import { uploadJSON } from './core/ipfs'
 import { siweMessage, keysFromSig, createWallet, createGroupChannel, DEMO_PRIVATE_KEYS } from './core/crypto'
@@ -296,10 +297,10 @@ function Row({ label, value, color }: { label: string; value: string; color: str
 
 // ── Tab toggle ────────────────────────────────────────────────────────────────
 
-type Tab = 'live' | 'messenger' | 'demo'
+type Tab = 'live' | 'messenger' | 'demo' | 'omnibar'
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('live')
+  const [tab, setTab] = useState<Tab>('omnibar')
 
   function TabBtn({ id, children }: { id: Tab; children: React.ReactNode }) {
     const active = tab === id
@@ -334,6 +335,7 @@ export default function App() {
           Level 1 · NFT-gated encrypted messenger
         </span>
         <div style={{ display: 'flex', gap: 8 }}>
+          <TabBtn id="omnibar">⬡ Omnibar</TabBtn>
           <TabBtn id="live">⬡ Live · Sepolia</TabBtn>
           <TabBtn id="messenger">⬡ Messenger</TabBtn>
           <TabBtn id="demo">⬡ Crypto Demo</TabBtn>
@@ -341,7 +343,8 @@ export default function App() {
       </div>
 
       {/* Body */}
-      {tab === 'live'      ? <LiveView />      :
+      {tab === 'omnibar'   ? <Omnibar />       :
+       tab === 'live'      ? <LiveView />      :
        tab === 'messenger' ? <MessengerView /> :
                              <CryptoDemo />}
     </div>
