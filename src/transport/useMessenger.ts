@@ -4,7 +4,7 @@ import type { LightNode } from '@waku/sdk'
 import { siweMessage, keysFromSig, accessGroupChannel, type EEE } from '../core/crypto'
 import type { Wallet } from '../core/crypto'
 import { fetchJSON } from '../core/ipfs'
-import { createWakuNode, type NodeStatus } from './node'
+import { createNode, type NodeStatus } from './node'
 import { L1Messenger, channelTopic } from './messenger'
 import nacl from 'tweetnacl'
 
@@ -22,6 +22,7 @@ export interface UseMessengerResult {
   connect: () => void
   send: (text: string) => Promise<void>
   signError: string | null
+  isDemoMode?: boolean
 }
 
 function ts() {
@@ -70,7 +71,7 @@ export function useMessenger(
 
     const wallet = walletRef.current!
 
-    const node = await createWakuNode({
+    const node = await createNode({
       onStatus: (s, detail) => {
         setStatus(s)
         log(`Waku → ${s}${detail ? ': ' + detail : ''}`)
@@ -188,5 +189,5 @@ export function useMessenger(
     setMessages(prev => [...prev, { text, direction: 'out', at: Date.now() }])
   }
 
-  return { status, signing, myPubKey, messages, connect, send, signError }
+  return { status, signing, myPubKey, messages, connect, send, signError, isDemoMode: false }
 }

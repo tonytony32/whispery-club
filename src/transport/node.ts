@@ -1,7 +1,22 @@
 import { createLightNode, Protocols } from '@waku/sdk'
 import type { LightNode } from '@waku/sdk'
+import { mockNode } from './mockNode'
 
 export type NodeStatus = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error'
+
+/**
+ * Returns the appropriate node for the current environment.
+ * When VITE_DEMO_MODE=true, returns the in-process mock bus (no network peers).
+ * Otherwise delegates to createWakuNode for real Waku connectivity.
+ */
+export async function createNode(options: WakuNodeOptions = {}): Promise<LightNode> {
+  if (import.meta.env.VITE_DEMO_MODE === 'true') {
+    options.onLog?.('[Demo] Using mock Waku bus — no network peers')
+    options.onStatus?.('connected')
+    return mockNode as unknown as LightNode
+  }
+  return createWakuNode(options)
+}
 
 const PEER_TIMEOUT_MS = 45_000
 

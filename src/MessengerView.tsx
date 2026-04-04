@@ -78,18 +78,33 @@ function LogPanel({ logs, accent }: { logs: string[]; accent: string }) {
   )
 }
 
+const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true'
+
+function ModeBadge({ isDemoMode }: { isDemoMode: boolean }) {
+  if (!isDemoMode) return null
+  return (
+    <span style={{
+      ...mono, fontSize: 10, fontWeight: 700, letterSpacing: 0.8,
+      background: '#ff9a3d22', color: C.orange,
+      border: `1px solid ${C.orange}55`,
+      borderRadius: 4, padding: '2px 6px',
+    }}>
+      ⚡ DEMO
+    </span>
+  )
+}
+
 function ParticipantPanel({
-  label, accent, isDemo, pointer, eeeEpoch, result, logs,
+  label, accent, pointer, eeeEpoch, result, logs,
 }: {
   label: string
   accent: string
-  isDemo: boolean
   pointer: string | undefined
   eeeEpoch: bigint
   result: UseMessengerResult
   logs: string[]
 }) {
-  const { status, signing, myPubKey, messages, connect, send, signError } = result
+  const { status, signing, myPubKey, messages, connect, send, signError, isDemoMode } = result
   const [draft, setDraft]         = useState('')
   const [sending, setSending]     = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
@@ -134,6 +149,7 @@ function ParticipantPanel({
                 0x{bytesToHex(myPubKey.slice(0, 4))}…
               </span>
             )}
+            <ModeBadge isDemoMode={!!isDemoMode} />
           </div>
           <StatusBadge status={status} signing={signing} />
         </div>
@@ -144,7 +160,7 @@ function ParticipantPanel({
             {' · '}epoch {String(eeeEpoch)}
           </div>
         }
-        {status === 'disconnected' &&
+        {status === 'disconnected' && !DEMO_MODE &&
           <div style={{ ...mono, fontSize: 11, color: C.orange }}>
             All Waku peers dropped — messages paused.
           </div>
@@ -160,7 +176,9 @@ function ParticipantPanel({
           </div>
         }
         {status === 'connecting' && !signing &&
-          <div style={{ ...mono, fontSize: 11, color: C.yellow }}>Joining Waku…</div>
+          <div style={{ ...mono, fontSize: 11, color: C.yellow }}>
+            {DEMO_MODE ? 'Starting demo…' : 'Joining Waku…'}
+          </div>
         }
         {status === 'error' &&
           <div style={{ ...mono, fontSize: 11, color: C.red }}>
@@ -176,7 +194,7 @@ function ParticipantPanel({
             border: 'none', borderRadius: 6, padding: '8px 18px',
             ...mono, fontWeight: 700, cursor: 'pointer',
           }}>
-            Connect to Waku
+            {DEMO_MODE ? '⚡ Start demo' : 'Connect to Waku'}
           </button>
         )}
         {(status === 'disconnected' || status === 'error') && (
@@ -294,12 +312,12 @@ export default function MessengerView() {
       overflow: 'hidden',
     }}>
       <ParticipantPanel
-        label="Alice" accent={C.accent} isDemo={false}
+        label="Alice" accent={C.accent}
         pointer={pointer} eeeEpoch={eeeEpoch}
         result={aliceResult} logs={aliceLogs}
       />
       <ParticipantPanel
-        label="Betty" accent={C.orange} isDemo={true}
+        label="Betty" accent={C.orange}
         pointer={pointer} eeeEpoch={eeeEpoch}
         result={bettyResult} logs={bettyLogs}
       />
