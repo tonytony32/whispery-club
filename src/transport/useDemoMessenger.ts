@@ -1,23 +1,23 @@
-/**
- * useDemoMessenger — like useMessenger but for a hardcoded demo wallet.
- *
- * No MetaMask needed. Keys are derived directly from a private key hex.
- * Auto-connects as soon as eeePointer is available.
- * Used for the split-screen demo (Bob's panel).
- */
-
 import { useState, useEffect, useRef } from 'react'
 import type { LightNode } from '@waku/sdk'
 import { createWallet, accessGroupChannel, type EEE } from '../core/crypto'
 import { fetchJSON } from '../core/ipfs'
 import { createWakuNode, type NodeStatus } from './node'
-import { L1Messenger } from './messenger'
+import { L1Messenger, channelTopic } from './messenger'
 import type { ChatMessage, UseMessengerResult } from './useMessenger'
+
+function ts() {
+  const d = new Date()
+  return [d.getHours(), d.getMinutes(), d.getSeconds()]
+    .map(n => String(n).padStart(2, '0')).join(':') +
+    '.' + String(d.getMilliseconds()).padStart(3, '0')
+}
 
 export function useDemoMessenger(
   privKeyHex: string,
   label: string,
   eeePointer: string | undefined,
+  addLog?: (msg: string) => void,
 ): UseMessengerResult {
   const [status, setStatus]   = useState<NodeStatus>('idle')
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -30,6 +30,8 @@ export function useDemoMessenger(
   const epochRef      = useRef<number>(0)
   const didConnect    = useRef(false)
 
+  const log = (msg: string) => addLog?.(`${ts()} [${label}] ${msg}`)
+
   useEffect(() => {
     return () => { nodeRef.current?.stop() }
   }, [])
@@ -41,21 +43,28 @@ export function useDemoMessenger(
   }, [eeePointer]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function connectInternal(pointer: string) {
+    log('Auto-connecting with demo key…')
     const wallet = createWallet(privKeyHex, label)
     setMyPubKey(wallet.x25519.publicKey)
+    log(`Keys derived — x25519 pubkey: 0x${Array.from(wallet.x25519.publicKey.slice(0,4)).map(b=>b.toString(16).padStart(2,'0')).join('')}…`)
 
     try {
+      log(`Fetching EEE from IPFS: ${pointer.slice(0, 20)}…`)
       const eee = await fetchJSON<EEE>(pointer)
-      const ck  = accessGroupChannel(wallet, eee)
+      log(`EEE loaded — channel: ${eee.channel_id.slice(0, 10)}…, epoch: ${eee.epoch}`)
+      const ck = accessGroupChannel(wallet, eee)
       if (!ck) {
         setStatus('error')
+        log('ACT lookup: no match — demo key not in ACT')
         return
       }
       contentKeyRef.current = ck
       channelIdRef.current  = eee.channel_id
       epochRef.current      = eee.epoch
-    } catch {
+      log('ACT lookup: ✓ content_key derived')
+    } catch (e) {
       setStatus('error')
+      log(`EEE fetch failed: ${e instanceof Error ? e.message : String(e)}`)
       return
     }
 
@@ -63,8 +72,10 @@ export function useDemoMessenger(
       const node = await createWakuNode({
         onStatus: (s, detail) => {
           setStatus(s)
-          if (detail) console.warn(`[Waku/${label}]`, detail)
+          if (detail) log(`Waku status → ${s}: ${detail}`)
+          else log(`Waku status → ${s}`)
         },
+        onLog: log,
       })
       nodeRef.current = node
 
@@ -76,21 +87,32 @@ export function useDemoMessenger(
         setMessages(prev => [...prev, { text, direction: 'in', at: Date.now() }])
       })
 
+      const topic = channelTopic(channelIdRef.current!)
+      log(`Subscribing to ${topic}`)
       await messenger.subscribeGroup(channelIdRef.current!, contentKeyRef.current!)
-    } catch {
+      log('Subscribed ✓')
+    } catch (e) {
       setStatus('error')
+      log(`Connection error: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
   async function send(text: string) {
     if (!messengerRef.current || !contentKeyRef.current || !channelIdRef.current)
       throw new Error('Not connected')
-    await messengerRef.current.publishGroup(
-      contentKeyRef.current,
-      channelIdRef.current,
-      epochRef.current,
-      text,
-    )
+    log(`Sending: "${text.slice(0, 30)}${text.length > 30 ? '…' : ''}"`)
+    try {
+      await messengerRef.current.publishGroup(
+        contentKeyRef.current,
+        channelIdRef.current,
+        epochRef.current,
+        text,
+      )
+      log('Message sent ✓')
+    } catch (e) {
+      log(`Send failed: ${e instanceof Error ? e.message : String(e)}`)
+      throw e
+    }
     setMessages(prev => [...prev, { text, direction: 'out', at: Date.now() }])
   }
 
@@ -99,7 +121,7 @@ export function useDemoMessenger(
     signing: false,
     myPubKey,
     messages,
-    connect: () => { /* auto-connects via useEffect */ },
+    connect: () => {},
     send,
     signError: null,
   }
