@@ -179,6 +179,21 @@ export default function Sidebar() {
         <SectionTitle>ENS Identities</SectionTitle>
         <ENSIdentityPanel />
       </div>
+
+      {/* e. ENSIP-25 Verification */}
+      <div style={section}>
+        <SectionTitle>ENSIP-25 Verification</SectionTitle>
+        <p style={{
+          ...mono, fontSize: 9, color: '#475569',
+          margin: 0, lineHeight: 1.6,
+        }}>
+          Agent ENS names are verified via ENSIP-25: a bidirectional text record
+          check linking <span style={{ color: '#fcd34d' }}>betty.whispery.eth</span> → ERC-8004 agentId #2.
+          <br />
+          <span style={{ color: '#6ee7b7' }}>✓</span> = both sides confirmed ·{' '}
+          <span style={{ color: '#475569' }}>unverified</span> = text record not set
+        </p>
+      </div>
     </div>
   )
 }

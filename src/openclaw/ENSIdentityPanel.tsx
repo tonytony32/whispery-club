@@ -8,6 +8,7 @@ import { useEffect } from 'react'
 import { resolveDisplayName } from '../omnibar/ensDisplay'
 import { useOpenClawStore } from './store'
 import { AGENT_IDENTITIES, AGENT_COLORS } from './types'
+import { ENSIP25Badge } from './ENSIP25Badge'
 
 const mono: React.CSSProperties = {
   fontFamily: '"IBM Plex Mono", "Fira Code", monospace',
@@ -64,6 +65,7 @@ export default function ENSIdentityPanel() {
               }}>
                 tokenId #{agent.tokenId}
               </span>
+              <ENSIP25Badge ensName={agent.ensName} tokenId={agent.tokenId} />
             </div>
             <span style={{ ...mono, fontSize: 9, color: '#475569' }}>
               {agent.wallet.slice(0, 6)}…{agent.wallet.slice(-4)}
