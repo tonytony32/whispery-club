@@ -21,7 +21,7 @@ export default function OpenClawObserver() {
     if (!DEMO_MODE || started.current) return
     started.current = true
     // Small delay so the UI renders first
-    const t = setTimeout(() => demoMessenger.start(), 400)
+    const t = setTimeout(() => demoMessenger.start(), 2000)
     return () => {
       clearTimeout(t)
       demoMessenger.stop()

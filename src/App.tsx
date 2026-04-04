@@ -386,9 +386,9 @@ export default function App() {
         </span>
         <div style={{ display: 'flex', gap: 8, flex: 1 }}>
           <TabBtn id="omnibar">⬡ Omnibar</TabBtn>
+          <TabBtn id="openclaw">⬡ OpenClaw</TabBtn>
           <TabBtn id="messenger">⬡ Messenger</TabBtn>
           <TabBtn id="demo">⬡ Crypto Demo</TabBtn>
-          <TabBtn id="openclaw">⬡ OpenClaw</TabBtn>
         </div>
         <WalletPill />
       </div>
