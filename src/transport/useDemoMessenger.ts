@@ -25,10 +25,11 @@ export function useDemoMessenger(
 
   const nodeRef       = useRef<LightNode | null>(null)
   const messengerRef  = useRef<L1Messenger | null>(null)
+  const walletRef     = useRef<ReturnType<typeof createWallet> | null>(null)
   const contentKeyRef = useRef<Uint8Array | null>(null)
   const channelIdRef  = useRef<string | null>(null)
   const epochRef      = useRef<number>(0)
-  const didConnect    = useRef(false)
+  const connectingRef = useRef(false)
 
   const log = (msg: string) => addLog?.(`${ts()} [${label}] ${msg}`)
 
@@ -36,66 +37,95 @@ export function useDemoMessenger(
     return () => { nodeRef.current?.stop() }
   }, [])
 
-  useEffect(() => {
-    if (!eeePointer || didConnect.current) return
-    didConnect.current = true
-    void connectInternal(eeePointer)
-  }, [eeePointer]) // eslint-disable-line react-hooks/exhaustive-deps
+  // ── Waku-only reconnect (reuses existing wallet + content_key) ──────────────
 
-  async function connectInternal(pointer: string) {
-    log('Auto-connecting with demo key…')
-    const wallet = createWallet(privKeyHex, label)
-    setMyPubKey(wallet.x25519.publicKey)
-    log(`Keys derived — x25519 pubkey: 0x${Array.from(wallet.x25519.publicKey.slice(0,4)).map(b=>b.toString(16).padStart(2,'0')).join('')}…`)
-
-    try {
-      log(`Fetching EEE from IPFS: ${pointer.slice(0, 20)}…`)
-      const eee = await fetchJSON<EEE>(pointer)
-      log(`EEE loaded — channel: ${eee.channel_id.slice(0, 10)}…, epoch: ${eee.epoch}`)
-      const ck = accessGroupChannel(wallet, eee)
-      if (!ck) {
-        setStatus('error')
-        log('ACT lookup: no match — demo key not in ACT')
-        return
-      }
-      contentKeyRef.current = ck
-      channelIdRef.current  = eee.channel_id
-      epochRef.current      = eee.epoch
-      log('ACT lookup: ✓ content_key derived')
-    } catch (e) {
-      setStatus('error')
-      log(`EEE fetch failed: ${e instanceof Error ? e.message : String(e)}`)
-      return
+  async function connectWaku() {
+    if (nodeRef.current) {
+      await nodeRef.current.stop()
+      nodeRef.current = null
+      messengerRef.current = null
     }
 
+    const wallet = walletRef.current!
+
+    const node = await createWakuNode({
+      onStatus: (s, detail) => {
+        setStatus(s)
+        log(`Waku → ${s}${detail ? ': ' + detail : ''}`)
+      },
+      onLog: log,
+    })
+    nodeRef.current = node
+
+    const messenger = new L1Messenger(node, wallet)
+    messengerRef.current = messenger
+
+    messenger.addEventListener('message', (e) => {
+      const { text } = (e as CustomEvent<{ text: string }>).detail
+      setMessages(prev => [...prev, { text, direction: 'in', at: Date.now() }])
+    })
+
+    const topic = channelTopic(channelIdRef.current!)
+    log(`Subscribing to ${topic}`)
+    await messenger.subscribeGroup(channelIdRef.current!, contentKeyRef.current!)
+    log('Subscribed ✓')
+  }
+
+  // ── Public connect (manual — no auto-connect) ───────────────────────────────
+
+  async function connect() {
+    if (connectingRef.current) return
+    if (status === 'connected') return
+    if (!eeePointer) return
+
+    connectingRef.current = true
+
     try {
-      const node = await createWakuNode({
-        onStatus: (s, detail) => {
-          setStatus(s)
-          if (detail) log(`Waku status → ${s}: ${detail}`)
-          else log(`Waku status → ${s}`)
-        },
-        onLog: log,
-      })
-      nodeRef.current = node
+      // Reconnect — wallet and content_key already known
+      if (walletRef.current && contentKeyRef.current) {
+        log('Reconnecting to Waku…')
+        await connectWaku()
+        return
+      }
 
-      const messenger = new L1Messenger(node, wallet)
-      messengerRef.current = messenger
+      // First connect — derive keys and fetch EEE
+      log('Connecting with demo key…')
+      const wallet = createWallet(privKeyHex, label)
+      walletRef.current = wallet
+      setMyPubKey(wallet.x25519.publicKey)
+      log(`Keys derived — x25519: 0x${Array.from(wallet.x25519.publicKey.slice(0, 4))
+        .map(b => b.toString(16).padStart(2, '0')).join('')}…`)
 
-      messenger.addEventListener('message', (e) => {
-        const { text } = (e as CustomEvent<{ text: string }>).detail
-        setMessages(prev => [...prev, { text, direction: 'in', at: Date.now() }])
-      })
+      try {
+        log(`Fetching EEE: ${eeePointer.slice(0, 20)}…`)
+        const eee = await fetchJSON<EEE>(eeePointer)
+        log(`EEE loaded — channel: ${eee.channel_id.slice(0, 10)}…, epoch: ${eee.epoch}`)
+        const ck = accessGroupChannel(wallet, eee)
+        if (!ck) {
+          setStatus('error')
+          log('ACT lookup: no match — key not in ACT')
+          return
+        }
+        contentKeyRef.current = ck
+        channelIdRef.current  = eee.channel_id
+        epochRef.current      = eee.epoch
+        log('ACT lookup: ✓ content_key derived')
+      } catch (e) {
+        setStatus('error')
+        log(`EEE fetch failed: ${e instanceof Error ? e.message : String(e)}`)
+        return
+      }
 
-      const topic = channelTopic(channelIdRef.current!)
-      log(`Subscribing to ${topic}`)
-      await messenger.subscribeGroup(channelIdRef.current!, contentKeyRef.current!)
-      log('Subscribed ✓')
+      await connectWaku()
     } catch (e) {
       setStatus('error')
       log(`Connection error: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      connectingRef.current = false
     }
   }
+
+  // ── Send ────────────────────────────────────────────────────────────────────
 
   async function send(text: string) {
     if (!messengerRef.current || !contentKeyRef.current || !channelIdRef.current)
@@ -103,10 +133,7 @@ export function useDemoMessenger(
     log(`Sending: "${text.slice(0, 30)}${text.length > 30 ? '…' : ''}"`)
     try {
       await messengerRef.current.publishGroup(
-        contentKeyRef.current,
-        channelIdRef.current,
-        epochRef.current,
-        text,
+        contentKeyRef.current, channelIdRef.current, epochRef.current, text,
       )
       log('Message sent ✓')
     } catch (e) {
@@ -116,13 +143,5 @@ export function useDemoMessenger(
     setMessages(prev => [...prev, { text, direction: 'out', at: Date.now() }])
   }
 
-  return {
-    status,
-    signing: false,
-    myPubKey,
-    messages,
-    connect: () => {},
-    send,
-    signError: null,
-  }
+  return { status, signing: false, myPubKey, messages, connect, send, signError: null }
 }

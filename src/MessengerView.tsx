@@ -169,13 +169,22 @@ function ParticipantPanel({
         {signError &&
           <div style={{ ...mono, fontSize: 11, color: C.red, marginTop: 4 }}>{signError}</div>
         }
-        {!isDemo && !signing && status === 'idle' && pointer && (
+        {!signing && status === 'idle' && pointer && (
           <button onClick={connect} style={{
             marginTop: 8, background: accent, color: '#fff',
             border: 'none', borderRadius: 6, padding: '8px 18px',
             ...mono, fontWeight: 700, cursor: 'pointer',
           }}>
             Connect to Waku
+          </button>
+        )}
+        {(status === 'disconnected' || status === 'error') && (
+          <button onClick={connect} style={{
+            marginTop: 8, background: C.dim, color: C.text,
+            border: `1px solid ${accent}`, borderRadius: 6, padding: '8px 18px',
+            ...mono, fontWeight: 700, cursor: 'pointer',
+          }}>
+            ↺ Reconnect
           </button>
         )}
       </div>
