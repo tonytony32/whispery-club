@@ -1,7 +1,7 @@
 /**
  * Omnibar — the universal entry point for Whispery
  *
- * Accepts two input types:
+ * Accepts three input types:
  *
  *   1. Luma URL   (https://lu.ma/…)
  *      → opens VerificationFlow to check approval + mint NFT
@@ -9,11 +9,22 @@
  *   2. NFT contract address  (0x…)
  *      → connects wallet and checks ownership on-chain
  *      → if the wallet holds a token, enters the chat directly
+ *
+ *   3. ENS name  (alice.eth)
+ *      → resolves ENS → address on mainnet
+ *      → checks if that address holds a WhisperyNFT on Sepolia
+ *      → shows ENS name throughout UI, never raw address
  */
 
-import { useState }          from 'react'
-import { ethers }            from 'ethers'
-import VerificationFlow      from './VerificationFlow'
+import { useState }                              from 'react'
+import { ethers }                                from 'ethers'
+import VerificationFlow                          from './VerificationFlow'
+import { resolveDisplayName, truncateAddress }   from './ensDisplay'
+
+// ── Config ────────────────────────────────────────────────────────────────────
+
+/** WhisperyNFT UUPS Proxy on Sepolia */
+const WHISPERY_NFT_ADDRESS = '0x51a5a1c73280b7a15dFbD3b173cD178C8a824C16'
 
 // ── Colour palette ────────────────────────────────────────────────────────────
 const C = {
@@ -36,12 +47,13 @@ const mono: React.CSSProperties = {
 
 // ── Input detection ───────────────────────────────────────────────────────────
 
-type InputKind = 'luma-url' | 'nft-address' | 'unknown'
+type InputKind = 'luma-url' | 'nft-address' | 'ens-name' | 'unknown'
 
 function detectKind(value: string): InputKind {
   const v = value.trim()
   if (v.startsWith('http') && v.includes('lu.ma')) return 'luma-url'
   if (/^0x[0-9a-fA-F]{40}$/.test(v))              return 'nft-address'
+  if (/\.eth$/i.test(v) && !v.startsWith('http'))  return 'ens-name'
   return 'unknown'
 }
 
@@ -53,15 +65,22 @@ const ERC721_ABI = [
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Omnibar() {
-  const [value, setValue]           = useState('')
-  const [kind, setKind]             = useState<InputKind>('unknown')
-  const [showFlow, setShowFlow]     = useState(false)
+  const [value, setValue]       = useState('')
+  const [kind, setKind]         = useState<InputKind>('unknown')
+  const [showFlow, setShowFlow] = useState(false)
 
   // NFT path state
-  const [nftChecking, setNftChecking] = useState(false)
-  const [nftError, setNftError]       = useState<string | null>(null)
-  const [nftGranted, setNftGranted]   = useState(false)
-  const [nftName, setNftName]         = useState<string | null>(null)
+  const [nftChecking, setNftChecking]               = useState(false)
+  const [nftError, setNftError]                     = useState<string | null>(null)
+  const [nftGranted, setNftGranted]                 = useState(false)
+  const [nftName, setNftName]                       = useState<string | null>(null)
+  const [connectedDisplayName, setConnectedDisplay] = useState<string | null>(null)
+
+  // ENS path state
+  const [ensChecking, setEnsChecking]   = useState(false)
+  const [ensError, setEnsError]         = useState<string | null>(null)
+  const [ensGranted, setEnsGranted]     = useState(false)
+  const [ensDisplayName, setEnsDisplay] = useState<string | null>(null)
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const v = e.target.value
@@ -69,17 +88,19 @@ export default function Omnibar() {
     setKind(detectKind(v))
     setNftError(null)
     setNftGranted(false)
+    setConnectedDisplay(null)
+    setEnsError(null)
+    setEnsGranted(false)
+    setEnsDisplay(null)
   }
 
   function handleGo() {
-    if (kind === 'luma-url') {
-      setShowFlow(true)
-    } else if (kind === 'nft-address') {
-      checkNFTOwnership(value.trim())
-    }
+    if (kind === 'luma-url')    setShowFlow(true)
+    if (kind === 'nft-address') checkNFTOwnership(value.trim())
+    if (kind === 'ens-name')    checkENSName(value.trim())
   }
 
-  // ── NFT ownership check ─────────────────────────────────────────────────────
+  // ── NFT ownership check (path 2) ─────────────────────────────────────────────
   async function checkNFTOwnership(contractAddress: string) {
     setNftChecking(true)
     setNftError(null)
@@ -107,6 +128,9 @@ export default function Omnibar() {
 
       if (balance > 0n) {
         setNftGranted(true)
+        // Reverse-lookup: show ENS name if the connected wallet has one
+        const display = await resolveDisplayName(address, provider)
+        setConnectedDisplay(display)
       } else {
         setNftError(`Your wallet doesn't hold any token from ${name}.`)
       }
@@ -117,19 +141,64 @@ export default function Omnibar() {
     }
   }
 
+  // ── ENS name → membership check (path 3) ─────────────────────────────────────
+  async function checkENSName(ensName: string) {
+    setEnsChecking(true)
+    setEnsError(null)
+
+    try {
+      // Step 1 — forward resolve: ENS name → address (ENS lives on mainnet)
+      const mainnet  = ethers.getDefaultProvider('mainnet')
+      const resolved = await (mainnet as ethers.AbstractProvider).resolveName(ensName)
+
+      if (!resolved) {
+        setEnsError(`ENS name "${ensName}" not found.`)
+        return
+      }
+
+      // Step 2 — check WhisperyNFT balance on Sepolia
+      const eth = (window as Window & { ethereum?: ethers.Eip1193Provider }).ethereum
+      if (!eth) {
+        setEnsError('No wallet found — install MetaMask or another Web3 wallet.')
+        return
+      }
+
+      const provider = new ethers.BrowserProvider(eth)
+      await provider.send('eth_requestAccounts', [])
+
+      const nft     = new ethers.Contract(WHISPERY_NFT_ADDRESS, ERC721_ABI, provider)
+      const balance = await nft.balanceOf(resolved)
+
+      if (balance > 0n) {
+        setEnsGranted(true)
+        setEnsDisplay(ensName) // always show ENS name, never raw address
+      } else {
+        setEnsError(`${ensName} doesn't hold a membership token.`)
+      }
+    } catch (err) {
+      setEnsError(err instanceof Error ? err.message : 'ENS resolution failed.')
+    } finally {
+      setEnsChecking(false)
+    }
+  }
+
+  const isChecking = nftChecking || ensChecking
+
   // ── Render ────────────────────────────────────────────────────────────────────
   const placeholder =
-    kind === 'luma-url'     ? 'Luma event URL detected →' :
-    kind === 'nft-address'  ? 'NFT contract detected →' :
-                              'Paste a Luma event URL or NFT contract address…'
+    kind === 'luma-url'    ? 'Luma event URL detected →' :
+    kind === 'nft-address' ? 'NFT contract detected →' :
+    kind === 'ens-name'    ? 'ENS name detected →' :
+                             'Paste a Luma URL, NFT contract, or ENS name (alice.eth)…'
 
   const btnLabel =
-    nftChecking             ? 'Checking…' :
-    kind === 'luma-url'     ? 'Claim access →' :
-    kind === 'nft-address'  ? 'Check ownership →' :
-                              '↵'
+    isChecking             ? 'Checking…' :
+    kind === 'luma-url'    ? 'Claim access →' :
+    kind === 'nft-address' ? 'Check ownership →' :
+    kind === 'ens-name'    ? `Resolve ${value.trim()} →` :
+                             '↵'
 
-  const btnEnabled = kind !== 'unknown' && !nftChecking
+  const btnEnabled = kind !== 'unknown' && !isChecking
 
   return (
     <div style={{
@@ -180,6 +249,7 @@ export default function Omnibar() {
             color: btnEnabled ? '#fff' : C.dim,
             border: 'none', cursor: btnEnabled ? 'pointer' : 'default',
             transition: 'background 0.2s',
+            whiteSpace: 'nowrap',
           }}
         >
           {btnLabel}
@@ -193,10 +263,12 @@ export default function Omnibar() {
           <span style={{ color: C.muted }}>https://lu.ma/3wczh9p4</span>
           &nbsp;·&nbsp;
           <span style={{ color: C.muted }}>0x51a5a1c7…</span>
+          &nbsp;·&nbsp;
+          <span style={{ color: C.muted }}>alice.eth</span>
         </div>
       )}
 
-      {/* NFT result */}
+      {/* NFT result (path 2) */}
       {nftGranted && (
         <div style={{
           ...mono, marginTop: 24, padding: '16px 24px',
@@ -204,7 +276,9 @@ export default function Omnibar() {
           borderRadius: 10, color: C.green, fontSize: 13,
           maxWidth: 600, width: '100%', textAlign: 'center',
         }}>
-          ✓ Token verified — welcome to <strong>{nftName}</strong>.
+          ✓ Token verified —{' '}
+          <strong>{connectedDisplayName ?? truncateAddress(value.trim())}</strong>
+          {' '}is a member of <strong>{nftName}</strong>.
           <br />
           <span style={{ color: C.muted, fontSize: 11 }}>
             {/* TODO: navigate to <MessengerView /> */}
@@ -219,6 +293,32 @@ export default function Omnibar() {
           maxWidth: 600, width: '100%', textAlign: 'center',
         }}>
           {nftError}
+        </div>
+      )}
+
+      {/* ENS result (path 3) */}
+      {ensGranted && ensDisplayName && (
+        <div style={{
+          ...mono, marginTop: 24, padding: '16px 24px',
+          background: C.raised, border: `1px solid ${C.green}55`,
+          borderRadius: 10, color: C.green, fontSize: 13,
+          maxWidth: 600, width: '100%', textAlign: 'center',
+        }}>
+          ✓ <strong>{ensDisplayName}</strong> — membership confirmed.
+          <br />
+          <span style={{ color: C.muted, fontSize: 11 }}>
+            {/* TODO: navigate to <MessengerView /> passing ensDisplayName as identity */}
+            Opening chat as {ensDisplayName}…
+          </span>
+        </div>
+      )}
+
+      {ensError && (
+        <div style={{
+          ...mono, marginTop: 16, color: C.red, fontSize: 12,
+          maxWidth: 600, width: '100%', textAlign: 'center',
+        }}>
+          {ensError}
         </div>
       )}
 
