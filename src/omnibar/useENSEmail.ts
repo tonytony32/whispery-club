@@ -31,21 +31,21 @@ export function useENSEmail() {
       // Step 1 — reverse lookup: address → ENS name
       const ensName = await provider.lookupAddress(address)
       if (!ensName) {
-        setStatus('No ENS name found for this wallet — enter your email manually.')
+        setStatus('No email found in ENS registry — enter your email manually.')
         return null
       }
 
       // Step 2 — get resolver
       const resolver = await provider.getResolver(ensName)
       if (!resolver) {
-        setStatus(`ENS name ${ensName} found but has no resolver.`)
+        setStatus('No email found in ENS registry — enter your email manually.')
         return null
       }
 
       // Step 3 — read email text record
       const ensEmail = await resolver.getText('email')
       if (!ensEmail) {
-        setStatus(`${ensName} has no email text record — enter your email manually.`)
+        setStatus('No email found in ENS registry — enter your email manually.')
         return null
       }
 
@@ -54,7 +54,7 @@ export function useENSEmail() {
       return ensEmail
 
     } catch (err) {
-      setStatus('ENS lookup failed — enter your email manually.')
+        setStatus('No email found in ENS registry — enter your email manually.')
       return null
     } finally {
       setLoading(false)
