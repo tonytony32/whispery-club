@@ -148,8 +148,8 @@ export default function Omnibar() {
 
     try {
       // Step 1 — forward resolve: ENS name → address (ENS lives on mainnet)
-      const mainnet  = ethers.getDefaultProvider('mainnet')
-      const resolved = await (mainnet as ethers.AbstractProvider).resolveName(ensName)
+      const mainnet  = new ethers.JsonRpcProvider('https://eth.llamarpc.com')
+      const resolved = await mainnet.resolveName(ensName)
 
       if (!resolved) {
         setEnsError(`ENS name "${ensName}" not found.`)

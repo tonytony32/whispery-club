@@ -23,7 +23,7 @@ export async function resolveDisplayName(
 ): Promise<string> {
   if (ensCache.has(address)) return ensCache.get(address)!
   try {
-    const mainnet = ethers.getDefaultProvider('mainnet')
+    const mainnet = new ethers.JsonRpcProvider('https://eth.llamarpc.com')
     const name    = await mainnet.lookupAddress(address)
     const display = name ?? truncateAddress(address)
     ensCache.set(address, display)
