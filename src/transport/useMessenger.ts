@@ -30,6 +30,7 @@ export interface ChatMessage {
 }
 
 export interface UseMessengerResult {
+
   status: NodeStatus
   /** 'signing' while waiting for MetaMask signature. */
   signing: boolean

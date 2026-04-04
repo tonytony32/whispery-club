@@ -112,10 +112,7 @@ export class L1Messenger extends EventTarget {
     const data    = eciesEncrypt(targetPubKey, new TextEncoder().encode(JSON.stringify(l0)))
     const payload = encodeEnvelope({ macHint: hint, data })
 
-    const result = await this.node.lightPush.send(encoder, { payload })
-    if (result.failures?.length) {
-      throw new Error(`Waku push failed: ${result.failures.map(f => f.error).join(', ')}`)
-    }
+    await this.sendWithRetry(encoder, payload)
   }
 
   /**
@@ -136,10 +133,7 @@ export class L1Messenger extends EventTarget {
     const data     = new TextEncoder().encode(JSON.stringify(l0))
     const payload  = encodeEnvelope({ macHint: hint, data })
 
-    const result = await this.node.lightPush.send(encoder, { payload })
-    if (result.failures?.length) {
-      throw new Error(`Waku push failed: ${result.failures.map(f => f.error).join(', ')}`)
-    }
+    await this.sendWithRetry(encoder, payload)
   }
 
   /**
@@ -228,6 +222,28 @@ export class L1Messenger extends EventTarget {
         console.debug('[L1] Decryption failed — hint collision or tampered payload')
       }
     })
+  }
+
+  // ── Internal helpers ───────────────────────────────────────────────────────
+
+  /**
+   * lightPush with exponential-backoff retry.
+   * Waku peers occasionally disconnect right after waitForPeers resolves.
+   * Three attempts (500 ms → 1 s → 2 s) cover transient peer churn.
+   */
+  private async sendWithRetry(
+    encoder: ReturnType<typeof createEncoder>,
+    payload: Uint8Array,
+  ): Promise<void> {
+    const delays = [500, 1000, 2000]
+    let lastError = 'unknown'
+    for (let i = 0; i <= delays.length; i++) {
+      const result = await this.node.lightPush.send(encoder, { payload })
+      if (!result.failures?.length) return
+      lastError = result.failures.map(f => f.error).join(', ')
+      if (i < delays.length) await new Promise(r => setTimeout(r, delays[i]))
+    }
+    throw new Error(`Waku push failed: ${lastError}`)
   }
 }
 
