@@ -11,7 +11,7 @@
  */
 
 const EAS_CONTRACT_ADDRESS = '0xC2679fBD37d54388Ce493F1DB75320D236e1815e'
-const SCHEMA_STRING        = 'bytes32 hashedEmail,string eventId,bool isApproved'
+// Schema registered on Sepolia: bytes32 hashedEmail, string eventId, bool isApproved
 
 /**
  * Load and validate required environment variables.
@@ -30,4 +30,4 @@ function loadEnv() {
   return { privateKey, schemaUID, rpcUrl }
 }
 
-module.exports = { EAS_CONTRACT_ADDRESS, RPC_URL, SCHEMA_STRING, loadEnv }
+module.exports = { EAS_CONTRACT_ADDRESS, loadEnv }

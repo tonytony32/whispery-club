@@ -1,14 +1,28 @@
 'use strict'
 
 /**
- * EAS attestation layer.
- * Responsible for: provider setup, signer, schema encoding, tx submission.
- * Has no knowledge of HTTP — takes plain data, returns the attestation UID.
+ * EAS attestation layer — direct ethers contract call, no EAS SDK.
+ *
+ * EAS contract ABI (only the two pieces we need):
+ *   attest(AttestationRequest) → bytes32 uid
+ *   event Attested(recipient, attester, uid, schemaUID)
+ *
+ * AttestationRequest = {
+ *   bytes32 schema,
+ *   AttestationRequestData data: {
+ *     address recipient, uint64 expirationTime, bool revocable,
+ *     bytes32 refUID, bytes data, uint256 value
+ *   }
+ * }
  */
 
 const { ethers }             = require('ethers')
-const { EAS, SchemaEncoder } = require('@ethereum-attestation-service/eas-sdk')
-const { EAS_CONTRACT_ADDRESS, SCHEMA_STRING } = require('./config')
+const { EAS_CONTRACT_ADDRESS } = require('./config')
+
+const EAS_ABI = [
+  'function attest((bytes32 schema, (address recipient, uint64 expirationTime, bool revocable, bytes32 refUID, bytes data, uint256 value) data) request) payable returns (bytes32)',
+  'event Attested(address indexed recipient, address indexed attester, bytes32 uid, bytes32 indexed schemaUID)',
+]
 
 /**
  * Emit an on-chain EAS attestation on Sepolia.
@@ -19,34 +33,40 @@ const { EAS_CONTRACT_ADDRESS, SCHEMA_STRING } = require('./config')
  * @param {string} params.hashedEmail  bytes32 keccak256 hash of the normalised email
  * @param {string} params.eventId      Luma event API ID
  * @param {string} params.rpcUrl       Sepolia RPC endpoint
- * @returns {Promise<string>}          UID of the new attestation
+ * @returns {Promise<string>}          UID of the new attestation (bytes32 hex)
  */
 async function emitAttestation({ privateKey, schemaUID, hashedEmail, eventId, rpcUrl }) {
   const provider = new ethers.JsonRpcProvider(rpcUrl)
   const signer   = new ethers.Wallet(privateKey, provider)
+  const eas      = new ethers.Contract(EAS_CONTRACT_ADDRESS, EAS_ABI, signer)
 
-  const eas = new EAS(EAS_CONTRACT_ADDRESS)
-  eas.connect(signer)
+  // Encode the three schema fields in the same order they were registered
+  const abiCoder    = ethers.AbiCoder.defaultAbiCoder()
+  const encodedData = abiCoder.encode(
+    ['bytes32', 'string', 'bool'],
+    [hashedEmail, eventId, true],
+  )
 
-  const encoder     = new SchemaEncoder(SCHEMA_STRING)
-  const encodedData = encoder.encodeData([
-    { name: 'hashedEmail', value: hashedEmail, type: 'bytes32' },
-    { name: 'eventId',     value: eventId,     type: 'string'  },
-    { name: 'isApproved',  value: true,        type: 'bool'    },
-  ])
-
-  const tx  = await eas.attest({
+  const tx      = await eas.attest({
     schema: schemaUID,
     data: {
       recipient:      ethers.ZeroAddress, // identity is the hashed email, not an address
       expirationTime: 0n,
       revocable:      true,
+      refUID:         ethers.ZeroHash,
       data:           encodedData,
+      value:          0n,
     },
   })
 
-  const uid = await tx.wait() // EAS SDK resolves to the new UID string
-  return uid
+  const receipt = await tx.wait()
+
+  // Extract the UID from the Attested event emitted by the contract
+  const attested = receipt.logs
+    .map(log => { try { return eas.interface.parseLog(log) } catch { return null } })
+    .find(e => e?.name === 'Attested')
+
+  return attested.args.uid
 }
 
 module.exports = { emitAttestation }
