@@ -144,5 +144,14 @@ export function useDemoMessenger(
     setMessages(prev => [...prev, { text, direction: 'out', at: Date.now() }])
   }
 
-  return { status, signing: false, myPubKey, messages, connect, send, signError: null }
+  async function disconnect() {
+    if (nodeRef.current) {
+      await nodeRef.current.stop()
+      nodeRef.current = null
+      messengerRef.current = null
+    }
+    setStatus('idle')
+  }
+
+  return { status, signing: false, myPubKey, messages, connect, send, disconnect, signError: null }
 }

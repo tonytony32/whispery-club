@@ -7,9 +7,21 @@ import { BACK_ADDRESS, BACK_ABI, CHANNEL_ID, GROUP_NAME } from './contracts'
 import { DEMO_PRIVATE_KEYS, createWallet } from './core/crypto'
 import type { NodeStatus } from './transport/node'
 import { useMemberIdentities, type MemberIdentity } from './chat/useMemberIdentities'
-import AgentBanner    from './chat/AgentBanner'
-import MemberPill     from './chat/MemberPill'
-import AgentFeedback  from './chat/AgentFeedback'
+import AgentBanner                          from './chat/AgentBanner'
+import MemberPill                           from './chat/MemberPill'
+import AgentFeedback                        from './chat/AgentFeedback'
+import AttestationToast, { type ToastState } from './chat/AttestationToast'
+import { calcScore, fetchRepScore }          from './chat/conversationAttestation'
+import { uploadJSON }                        from './core/ipfs'
+import { ethers }                            from 'ethers'
+
+const REPUTATION_REGISTRY =
+  (import.meta as unknown as { env: Record<string, string | undefined> }).env.VITE_ERC8004_REPUTATION
+  ?? '0xB5048e3ef1DA4E04deB6f7d0423D06F63869e322'
+
+const GIVE_FEEDBACK_ABI = [
+  'function giveFeedback(uint256 agentId, int8 score, string calldata feedbackURI) external',
+]
 
 const C = {
   bg:        '#0b0b0e',
@@ -98,17 +110,97 @@ function ParticipantPanel({
   channelId: string
   humanAddress: string
 }) {
-  const { status, signing, myPubKey, messages, connect, send, signError } = result
+  const { status, signing, myPubKey, messages, connect, send, disconnect, signError } = result
   const [draft, setDraft]         = useState('')
   const [sending, setSending]     = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [hoveredMsgIdx, setHoveredMsgIdx] = useState<number | null>(null)
   const [ratingAgent,   setRatingAgent]   = useState<MemberIdentity | null>(null)
+
+  // ── Attestation toast ───────────────────────────────────────────────────────
+  const [toastState, setToastState] = useState<ToastState | null>(null)
+  const [toastScore, setToastScore] = useState(0)
+  const [toastTxHash, setToastTxHash] = useState('')
+  const [toastAgent, setToastAgent] = useState('')
+
+  // ── Live reputation score ───────────────────────────────────────────────────
+  const [liveScore, setLiveScore] = useState<{ avg: number; count: number } | null>(null)
+
+  useEffect(() => {
+    const agent = [...memberIdentities.values()].find(m => m.ensip25Verified && m.reputation)
+    if (agent?.reputation && agent.reputation.avgScore !== null) {
+      setLiveScore({ avg: agent.reputation.avgScore, count: agent.reputation.entries.length })
+    }
+  }, [memberIdentities])
+
   const threadRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     threadRef.current?.scrollTo(0, threadRef.current.scrollHeight)
   }, [messages])
+
+  // ── Disconnect + auto-attestation ───────────────────────────────────────────
+
+  async function handleDisconnect() {
+    const agent = [...memberIdentities.values()].find(m => m.ensip25Verified)
+
+    if (!isDemo && agent?.agentId !== null && agent !== undefined) {
+      const enriched = messages.map(m => ({
+        ethAddress: m.direction === 'out'
+          ? humanAddress
+          : (m.senderPk ? (pubkeyToAddress.get(m.senderPk) ?? '') : ''),
+        timestamp: m.at,
+      })).filter(m => m.ethAddress !== '')
+
+      const score = calcScore(enriched, agent.address, humanAddress)
+      setToastAgent(agent.displayName)
+
+      if (score === null) {
+        setToastState('skipped')
+        setTimeout(() => setToastState(null), 3000)
+      } else {
+        try {
+          setToastState('building')
+          const attestation = {
+            protocol:    'whispery-attestation-v1',
+            agentId:     agent.agentId,
+            channelId,
+            score,
+            exchanges:   messages.length,
+            generatedAt: Date.now(),
+          }
+          const uri = await uploadJSON(attestation, `attestation-agent-${agent.agentId}`)
+
+          setToastState('signing')
+          const eth = (window as Window & { ethereum?: ethers.Eip1193Provider }).ethereum
+          if (!eth) throw new Error('No wallet')
+          const provider = new ethers.BrowserProvider(eth)
+          const signer   = await provider.getSigner()
+          const registry = new ethers.Contract(REPUTATION_REGISTRY, GIVE_FEEDBACK_ABI, signer)
+          const tx: ethers.ContractTransactionResponse =
+            await registry.giveFeedback(agent.agentId!, score, uri)
+          await tx.wait()
+
+          setToastScore(score)
+          setToastTxHash(tx.hash)
+          setToastState('submitted')
+
+          // Refresh live score
+          const fresh = await fetchRepScore(agent.agentId!)
+          if (fresh) setLiveScore(fresh)
+
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : ''
+          if (!msg.includes('user rejected') && !msg.includes('ACTION_REJECTED')) {
+            // non-rejection error: dismiss silently
+          }
+          setToastState(null)
+        }
+      }
+    }
+
+    await disconnect()
+  }
 
   async function handleSend() {
     if (!draft.trim()) return
@@ -150,9 +242,15 @@ function ParticipantPanel({
         </div>
 
         {connected &&
-          <div style={{ ...mono, fontSize: 10, color: C.muted }}>
+          <div style={{ ...mono, fontSize: 10, color: C.muted, display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ color: accent, fontWeight: 700 }}>{GROUP_NAME}</span>
             {' · '}epoch {String(eeeEpoch)}
+            {liveScore && liveScore.count > 0 && (
+              <span style={{ color: C.yellow }}>
+                🤖 ⭐ {liveScore.avg.toFixed(1)}
+                <span style={{ color: C.muted }}> ({liveScore.count})</span>
+              </span>
+            )}
           </div>
         }
 
@@ -223,6 +321,15 @@ function ParticipantPanel({
             ...mono, fontWeight: 700, cursor: 'pointer',
           }}>
             ↺ Reconnect
+          </button>
+        )}
+        {status === 'connected' && (
+          <button onClick={handleDisconnect} style={{
+            marginTop: 8, background: 'none', color: C.muted,
+            border: `1px solid ${C.dim}`, borderRadius: 6, padding: '6px 14px',
+            ...mono, fontSize: 11, cursor: 'pointer',
+          }}>
+            Desconectar
           </button>
         )}
       </div>
@@ -341,6 +448,17 @@ function ParticipantPanel({
           epoch={Number(eeeEpoch)}
           humanAddress={humanAddress}
           onClose={() => setRatingAgent(null)}
+        />
+      )}
+
+      {/* Auto-attestation toast */}
+      {toastState && (
+        <AttestationToast
+          state={toastState}
+          agentName={toastAgent}
+          score={toastScore}
+          txHash={toastTxHash}
+          onDismiss={() => setToastState(null)}
         />
       )}
     </div>

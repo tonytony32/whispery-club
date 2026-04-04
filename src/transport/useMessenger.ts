@@ -23,6 +23,7 @@ export interface UseMessengerResult {
   messages: ChatMessage[]
   connect: () => void
   send: (text: string) => Promise<void>
+  disconnect: () => Promise<void>
   signError: string | null
 }
 
@@ -190,5 +191,14 @@ export function useMessenger(
     setMessages(prev => [...prev, { text, direction: 'out', at: Date.now() }])
   }
 
-  return { status, signing, myPubKey, messages, connect, send, signError }
+  async function disconnect() {
+    if (nodeRef.current) {
+      await nodeRef.current.stop()
+      nodeRef.current = null
+      messengerRef.current = null
+    }
+    setStatus('idle')
+  }
+
+  return { status, signing, myPubKey, messages, connect, send, disconnect, signError }
 }
