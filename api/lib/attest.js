@@ -8,20 +8,21 @@
 
 const { ethers }             = require('ethers')
 const { EAS, SchemaEncoder } = require('@ethereum-attestation-service/eas-sdk')
-const { EAS_CONTRACT_ADDRESS, RPC_URL, SCHEMA_STRING } = require('./config')
+const { EAS_CONTRACT_ADDRESS, SCHEMA_STRING } = require('./config')
 
 /**
- * Emit an on-chain EAS attestation on Gnosis Chain.
+ * Emit an on-chain EAS attestation on Sepolia.
  *
  * @param {object} params
  * @param {string} params.privateKey   Hex private key of the paying wallet
  * @param {string} params.schemaUID    bytes32 UID of the registered schema
  * @param {string} params.hashedEmail  bytes32 keccak256 hash of the normalised email
  * @param {string} params.eventId      Luma event API ID
+ * @param {string} params.rpcUrl       Sepolia RPC endpoint
  * @returns {Promise<string>}          UID of the new attestation
  */
-async function emitAttestation({ privateKey, schemaUID, hashedEmail, eventId }) {
-  const provider = new ethers.JsonRpcProvider(RPC_URL)
+async function emitAttestation({ privateKey, schemaUID, hashedEmail, eventId, rpcUrl }) {
+  const provider = new ethers.JsonRpcProvider(rpcUrl)
   const signer   = new ethers.Wallet(privateKey, provider)
 
   const eas = new EAS(EAS_CONTRACT_ADDRESS)

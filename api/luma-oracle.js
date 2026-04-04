@@ -58,6 +58,7 @@ module.exports = async function handler(req, res) {
     const uid = await emitAttestation({
       privateKey:   env.privateKey,
       schemaUID:    env.schemaUID,
+      rpcUrl:       env.rpcUrl,
       hashedEmail,
       eventId,
     })
