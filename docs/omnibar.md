@@ -1,22 +1,29 @@
 # Whispery · Omnibar
 
-The universal entry point for Whispery — a single smart input bar that routes
-users into the right access flow depending on what they paste.
+The universal entry point for Whispery — a single smart input bar that classifies
+what the user pastes and routes them into the correct access flow.
 
 ---
 
-## What it does
+## Classification — 5 paths (priority order)
 
-The Omnibar detects two kinds of input:
+| Priority | Input | Detection | Flow |
+|---|---|---|---|
+| 1 | Luma event URL | contains `lu.ma/` | VerificationFlow modal → email check → mint NFT → chat |
+| 2 | NFT contract address | `0x` + 40 hex, `eth_getCode != "0x"` | Connect wallet → `balanceOf(connected)` → chat |
+| 3 | ENS group name | `*.eth`, resolves to a contract | Connect wallet → `balanceOf(connected)` on resolved contract → chat |
+| 3b | ENS personal name | `*.eth`, resolves to an EOA | Informative message — not a group, no chat |
+| 4 | EOA address | `0x` + 40 hex, `eth_getCode == "0x"` | Informative message — not a group, no chat |
+| 5 | Unrecognised | anything else | Format hint |
 
-| Input | Detection | Flow |
-|---|---|---|
-| Luma event URL | starts with `http`, contains `lu.ma` | Verify identity → check Luma approval → mint NFT → chat |
-| NFT contract address | matches `0x` + 40 hex chars | Connect wallet → check `balanceOf` → enter chat directly |
+**Important:** paths 2/3/3b/4 share the same `0x` detection. The sync check
+sets kind to `classifying` and fires an async `eth_getCode` call to Sepolia
+to distinguish contract from EOA. A short "Analysing…" state is shown while
+this resolves.
 
 ---
 
-## UX flow
+## UX flows
 
 ### Path 1 — Luma URL
 
@@ -25,24 +32,23 @@ User pastes https://lu.ma/3wczh9p4
   │
   └── VerificationFlow modal opens
         │
-        ├── Option A: Email (Privy OTP) — stubbed, not active in demo
+        ├── Option A: Email (Privy OTP) — stubbed, COMING SOON
         │
         └── Option B: Web3 wallet  ← active for demo
               │
-              ├── Connect MetaMask (window.ethereum)
-              ├── ENS lookup: getResolver(address) → getText('email')
+              ├── Connect wallet (window.ethereum)
+              ├── ENS lookup: lookupAddress → getResolver → getText('email')
               │     → found:  auto-fill email input
-              │     → not found: show "enter email manually" message
+              │     → not found: "No email found in ENS registry — enter manually"
               │
-              ├── User confirms / types email
+              ├── User types / confirms email
               │
               └── POST /api/resolve-event
                     { eventUrl, verifiedEmail, targetWallet }
-                      │
-                      ├── parse URL → lumaId
+                      ├── parse URL slug → lumaId
                       ├── Luma API: is email approved?
-                      │     → not found → 403 friendly message
-                      │     → not approved → 403 friendly message
+                      │     → not found → 403
+                      │     → not approved → 403
                       └── mint WhisperyNFT → { tokenId, txHash }
 ```
 
@@ -51,11 +57,50 @@ User pastes https://lu.ma/3wczh9p4
 ```
 User pastes 0x51a5a1c7…
   │
+  ├── eth_getCode → "!= 0x" → classified as contract
   ├── Connect wallet (window.ethereum)
-  ├── nft.balanceOf(userAddress)
-  │     → balance > 0  → ✓ Token verified — enter chat
-  │     → balance = 0  → "Your wallet doesn't hold a token from {name}"
-  └── nft.name() shown in success message
+  ├── nft.balanceOf(connectedWallet)
+  │     → > 0  → ✓ [ENS name or 0xABCD…] is a member of [nft.name()]
+  │     → = 0  → "Your wallet doesn't hold a membership token for this group."
+  └── Reverse ENS lookup on connected wallet → show name if found
+```
+
+### Path 3 — ENS group name (→ contract)
+
+```
+User pastes beachclaw.whispery.eth
+  │
+  ├── provider.resolveName() → 0x51a5a1c7… (NFT contract)
+  ├── eth_getCode → contract confirmed
+  ├── Connect wallet (window.ethereum)
+  ├── nft.balanceOf(connectedWallet)
+  │     → > 0  → ✓ [alice.whispery.eth] — access to beachclaw.whispery.eth confirmed
+  │     → = 0  → "Your wallet doesn't hold a membership token for WhisperyNFT."
+  └── Reverse ENS lookup on connected wallet → show ENS name in success msg
+```
+
+### Path 3b — ENS personal name (→ EOA)
+
+```
+User pastes alice.whispery.eth
+  │
+  ├── provider.resolveName() → 0x50b8… (EOA)
+  ├── eth_getCode → "0x" → EOA
+  └── Informative neutral message:
+      "alice.whispery.eth is a personal address, not a group.
+       To access a chat, use a group ENS name (e.g. beachclaw.whispery.eth)."
+```
+
+### Path 4 — EOA address
+
+```
+User pastes 0xSomeEOA…
+  │
+  ├── eth_getCode → "0x" → EOA
+  └── Informative neutral message:
+      "This app is designed for group conversations.
+       To access a channel, paste a Luma event URL, an NFT contract address,
+       or a group ENS name."
 ```
 
 ---
@@ -64,18 +109,37 @@ User pastes 0x51a5a1c7…
 
 ```
 src/omnibar/
-  Omnibar.tsx           Smart input bar — detection + NFT ownership check
+  Omnibar.tsx           5-path classifier + NFT/ENS ownership checks
   VerificationFlow.tsx  Luma verification modal (Email stub + Web3 active)
-  useENSEmail.ts        ENS reverse-lookup + getText('email') hook
+  useENSEmail.ts        ENS email lookup for VerificationFlow (getText('email'))
+  ensDisplay.ts         resolveDisplayName() + resolveENSName() with RPC fallback chain
 
 api/
-  resolve-event.ts      POST endpoint: URL parse → Luma check → NFT mint
-  package.json          Standalone ESM package — only dependency: ethers ^6
+  resolve-event.ts      POST: URL parse → Luma guest check → NFT mint
+  package.json          commonjs, ethers ^6, @vercel/node
 ```
 
 ---
 
-## Backend — `api/resolve-event.ts`
+## `ensDisplay.ts`
+
+Central ENS utility — used by both the ENS path and the NFT success message.
+
+```typescript
+// RPC fallback chain (mainnet, for ENS)
+VITE_ENS_RPC_URL → rpc.ankr.com/eth → ethereum.publicnode.com → 1rpc.io/eth
+
+resolveENSName(name)          // forward: alice.whispery.eth → 0x50b8…
+resolveDisplayName(address)   // reverse: 0x50b8… → alice.whispery.eth (cached)
+truncateAddress(address)      // 0x50b8…5c65 fallback
+```
+
+`resolveDisplayName` uses an in-memory `Map<string, string>` cache — addresses
+with no ENS name are also cached (as truncated) to avoid repeat RPC calls.
+
+---
+
+## `api/resolve-event.ts`
 
 ### Endpoint
 
@@ -92,92 +156,48 @@ Content-Type: application/json
 
 ### URL parsing
 
-The Luma event slug is extracted from the URL path:
-
 ```
-https://lu.ma/3wczh9p4   →  "3wczh9p4"
-https://lu.ma/evt-abc123 →  "evt-abc123"
+https://lu.ma/3wczh9p4   →  slug "3wczh9p4"
+https://lu.ma/evt-abc123 →  slug "evt-abc123"
 ```
 
-This slug is passed directly to `GET /v1/event/get-guests?event_api_id={slug}`.
-If the Luma API returns no guests, the slug may need to be the internal `evt-xxx`
-ID from the Luma dashboard (visible in the event settings).
-
-### Luma guest check
-
-Paginates through the full guest list until the email is found.
-Accepted statuses: `approved`, `checked_in`.
+Slug passed to `GET /v1/event/get-guests?event_api_id={slug}`.
+If Luma returns no guests, use the internal `evt-xxx` ID from the dashboard.
 
 ### Error messages
 
-| Scenario | HTTP | Message shown to user |
+| Scenario | HTTP | Message |
 |---|---|---|
 | Email not in guest list | 403 | "This email is not registered for the event." |
 | Email found but not approved | 403 | "Your registration is pending or was not approved." |
 | Wallet already has NFT | 200 | "You already hold a membership token." |
 | Luma API unreachable | 502 | "Could not reach Luma API — try again shortly." |
 
-### Environment variables
+---
+
+## Environment variables
+
+### Frontend (`/.env`)
 
 | Variable | Description |
 |---|---|
-| `LUMA_API_KEY` | Luma API key — get at lu.ma/settings/developer |
-| `ADMIN_PRIVATE_KEY` | Owner wallet hex key — pays gas for `mint()` |
-| `SEPOLIA_RPC_URL` | Sepolia RPC endpoint |
+| `VITE_ENS_RPC_URL` | Alchemy mainnet HTTPS URL — used first for ENS resolution |
 
----
+### API (`/api/.env`)
 
-## ENS email resolution
-
-`useENSEmail.ts` runs a three-step lookup:
-
-```
-1. provider.lookupAddress(address)      → ENS name (e.g. alice.eth)
-2. provider.getResolver(ensName)        → resolver contract
-3. resolver.getText('email')            → email string or null
-```
-
-All three steps are graceful — if any returns null the hook sets a
-user-friendly `status` string and lets the user enter their email manually.
-No ENS name or no email record is not an error, just a fallback.
-
----
-
-## Privy integration (not active)
-
-The "Continue with Email" option in `VerificationFlow.tsx` is visually present
-but marked **COMING SOON**. To activate it:
-
-1. Create a Privy app at privy.io → copy the App ID
-2. `npm install @privy-io/react-auth`
-3. Set `VITE_PRIVY_APP_ID=your-app-id` in `.env`
-4. Wrap `<Omnibar />` in `<PrivyProvider appId={...}>` in `main.tsx`
-5. Replace the stub in `VerificationFlow.tsx` `path === 'email-privy'` section
-   with `useLoginWithEmail()` from `@privy-io/react-auth`
-
----
-
-## NFT contract
-
-| Property | Value |
+| Variable | Description |
 |---|---|
-| Contract | WhisperyNFT (UUPS Proxy) |
-| Address | `0x51a5a1c73280b7a15dFbD3b173cD178C8a824C16` |
-| Network | Ethereum Sepolia (chain ID 11155111) |
-| Mint | `mint(address to) onlyOwner` |
-| Check | `isMember(address) → bool` |
-| Check | `balanceOf(address) → uint256` |
+| `LUMA_API_KEY` | Luma API key — lu.ma/settings/developer |
+| `ADMIN_PRIVATE_KEY` | Alice's wallet key — pays gas for `mint()` |
+| `SEPOLIA_RPC_URL` | Sepolia RPC for minting |
 
 ---
 
 ## What is not implemented yet
 
-- **Navigation to chat** — both success paths (`nftGranted` and `onSuccess`) show
-  a placeholder. They should render `<MessengerView />` or push to the chat route,
-  passing the derived session wallet.
-- **Privy email path** — stub present in `VerificationFlow.tsx`, see above.
-- **Omnibar in main app** — `<Omnibar />` is standalone. It needs to be wired
-  into `App.tsx` as a landing tab or root route.
-- **Waku bootstrap after mint** — after a successful claim, the user should
-  automatically be guided through the SIWE signing + Waku connect flow from
-  `useMessenger.ts`.
+- **Navigation to chat** — all success paths show "Opening chat…" placeholder.
+  Should render `<MessengerView />` passing the group ENS name and session wallet.
+- **Privy email path** — visual stub in `VerificationFlow.tsx`, marked COMING SOON.
+  See Privy setup instructions in the stub comments.
+- **Waku bootstrap after mint** — after Luma claim, user should be guided through
+  SIWE signing + Waku connect from `useMessenger.ts`.
