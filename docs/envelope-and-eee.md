@@ -179,7 +179,7 @@ sent the message without revealing the content.
 
 In both cases, `sender_pk` travels inside the L1 `data` field. For P2P,
 the entire L0 Envelope (including `sender_pk`) is ECIES-encrypted, so it
-is invisible on the wire. For group, `sender_pk` is visible to Waku nodes —
+is invisible on the wire. For group, `sender_pk` is visible to transport nodes —
 this is the standard group messaging tradeoff: member identity is exposed
 at the transport layer, but message content is not.
 
@@ -221,6 +221,18 @@ signature = secp256k1.sign(hash, sender_eth_privkey)
 Proves that the holder of the Ethereum identity corresponding to `sender_pk`
 built this exact envelope with this exact content and this exact timestamp.
 Any modification to any field invalidates the signature.
+
+**Verification** (`openGroupEnvelope` with a `KeyRegistry`):
+
+```
+signingPubKey = keyRegistry.get(envelope.sender_pk)  // registered secp256k1 pubkey
+valid         = secp256k1.verify(signature, sha256(canonical), signingPubKey)
+```
+
+If the signature is invalid or the sender is not in the registry, the message is
+rejected before decryption. Without a registry, decryption proceeds but the
+signature is not checked — this is the current default until the on-chain
+Key Registry is deployed.
 
 ---
 

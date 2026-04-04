@@ -383,8 +383,68 @@ export function createGroupEnvelope(
   return { ...partial, signature: seal(partial, sender.ethPrivKey) }
 }
 
-/** Descifra un envelope de grupo con el content_key. */
-export function openGroupEnvelope(content_key: Uint8Array, envelope: Envelope): string {
+/**
+ * KeyRegistry — mapeo en memoria entre sender_pk (X25519, hex) y la clave de firma
+ * secp256k1 comprimida (33 bytes) del emisor.
+ *
+ * Es el sustituto temporal del Key Registry on-chain. En producción, este mapa
+ * se construirá consultando el contrato de registro de claves.
+ *
+ * Clave:  hex(wallet.x25519.publicKey)  ← igual que Envelope.sender_pk
+ * Valor:  secp256k1.getPublicKey(wallet.ethPrivKey, true)  ← 33 bytes comprimidos
+ */
+export type KeyRegistry = Map<string, Uint8Array>
+
+/**
+ * Construye un KeyRegistry a partir de un array de Wallets.
+ * Útil para tests y demos; en producción el mapa proviene del contrato on-chain.
+ */
+export function buildKeyRegistry(wallets: Wallet[]): KeyRegistry {
+  const registry: KeyRegistry = new Map()
+  for (const w of wallets) {
+    registry.set(toHex(w.x25519.publicKey), secp256k1.getPublicKey(w.ethPrivKey, true))
+  }
+  return registry
+}
+
+/**
+ * Verifica la firma secp256k1 del envelope contra la clave pública de firma del emisor.
+ * Lanza si la firma no es válida — indica impersonación o payload alterado.
+ */
+function verifyEnvelopeSignature(envelope: Envelope, signingPubKey: Uint8Array): void {
+  const hash = sha256(enc.encode(canonicalize(envelope as Record<string, unknown>)))
+  const sigBytes = fromHex(envelope.signature)
+  const valid = secp256k1.verify(sigBytes, hash, signingPubKey)
+  if (!valid) throw new Error('Whispery: firma inválida — posible impersonación o payload alterado')
+}
+
+/**
+ * Descifra un envelope de grupo con el content_key.
+ *
+ * Si se proporciona un `keyRegistry`, verifica la firma secp256k1 del emisor antes
+ * de descifrar. El emisor debe estar en el registro; si no está o la firma no es
+ * válida, lanza un error y el mensaje se descarta.
+ *
+ * @param content_key  Clave compartida del canal (obtenida via accessGroupChannel).
+ * @param envelope     L0 Envelope recibido del transporte.
+ * @param keyRegistry  Opcional — mapa sender_pk → secp256k1SigningPubKey.
+ *                     Si se omite, se descifra sin verificar la firma del emisor.
+ */
+export function openGroupEnvelope(
+  content_key: Uint8Array,
+  envelope: Envelope,
+  keyRegistry?: KeyRegistry,
+): string {
+  if (keyRegistry) {
+    const signingPubKey = keyRegistry.get(envelope.sender_pk)
+    if (!signingPubKey) {
+      throw new Error(
+        `Whispery: sender desconocido — ${envelope.sender_pk.slice(0, 16)}… no está en el key registry`,
+      )
+    }
+    verifyEnvelopeSignature(envelope, signingPubKey)
+  }
+
   const raw = fromHex(envelope.ciphertext)
   const nonce = raw.slice(0, nacl.secretbox.nonceLength)
   const box = raw.slice(nacl.secretbox.nonceLength)
