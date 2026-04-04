@@ -132,11 +132,11 @@ about membership is leaked.
   version:    1,
   channel_id: "780a35cc…",
   epoch:      0,
-  sender_pk:  "7a94cc…",
-  ciphertext: "73da6d…",
+  sender_pk:  "7a94cc…",          ← X25519 pubKey (visible on wire in group mode)
+  ciphertext: "73da6d…",          ← nonce[24] || secretbox(signingPubKey[33] || msg)
   mac_hint:   "73da6d",
   timestamp:  1775239095747,
-  signature:  "c92bb4…"
+  signature:  "c92bb4…"           ← secp256k1, verified against signingPubKey inside ciphertext
 }
 ```
 
@@ -146,23 +146,25 @@ The envelope is built incrementally. Each layer adds a specific security or
 routing property:
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  ⑤ NON-REPUDIATION                                  │
-│     signature: secp256k1(sha256(all fields above))  │
-├─────────────────────────────────────────────────────┤
-│  ④ ORIGIN SEAL                                      │
-│     timestamp: unix ms, stamped by sender           │
-├─────────────────────────────────────────────────────┤
-│  ③ ENCRYPTED PAYLOAD                                │
-│     ciphertext: nonce[24] || XSalsa20-Poly1305(msg) │
-│     mac_hint:   nonce[0..3] — routing hint only     │
-├─────────────────────────────────────────────────────┤
-│  ② SENDER IDENTITY                                  │
-│     sender_pk: X25519 public key of the sender      │
-├─────────────────────────────────────────────────────┤
-│  ① CHANNEL CONTEXT                                  │
-│     version · channel_id · epoch                    │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  ⑤ NON-REPUDIATION                                          │
+│     signature: secp256k1(sha256(all outer fields above))    │
+│     verified against signingPubKey extracted from layer ③   │
+├─────────────────────────────────────────────────────────────┤
+│  ④ ORIGIN SEAL                                              │
+│     timestamp: unix ms, stamped by sender                   │
+├─────────────────────────────────────────────────────────────┤
+│  ③ ENCRYPTED PAYLOAD                                        │
+│     plaintext = signingPubKey[33] || message_utf8           │
+│     ciphertext = nonce[24] || XSalsa20-Poly1305(plaintext)  │
+│     mac_hint   = nonce[0..3] — routing hint only            │
+├─────────────────────────────────────────────────────────────┤
+│  ② SENDER IDENTITY                                          │
+│     sender_pk: X25519 public key of the sender              │
+├─────────────────────────────────────────────────────────────┤
+│  ① CHANNEL CONTEXT                                          │
+│     version · channel_id · epoch                            │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 #### ① Channel context — `version`, `channel_id`, `epoch`
@@ -186,19 +188,18 @@ at the transport layer, but message content is not.
 #### ③ Encrypted payload — `ciphertext`, `mac_hint`
 
 ```
-nonce      = random 24 bytes
-ciphertext = nonce || XSalsa20-Poly1305(message, nonce, content_key)
-mac_hint   = nonce[0..3]
+signingPubKey = secp256k1.getPublicKey(sender.ethPrivKey, true)  // 33 bytes, compressed
+nonce         = random 24 bytes
+plaintext     = signingPubKey[33] || message_utf8
+ciphertext    = nonce[24] || XSalsa20-Poly1305(plaintext, nonce, content_key)
+mac_hint      = nonce[0..3]
 ```
 
-The Poly1305 authentication tag is embedded inside `ciphertext` by NaCl's
-`secretbox`. If a single bit is altered, decryption fails with an explicit
-error — there is no way to tamper silently.
+The plaintext is prefixed with the sender's **secp256k1 signing public key** (33 bytes, compressed). This is the in-band mechanism for layer ⑤ verification: the key travels hidden inside the ciphertext, invisible to transport nodes, and is extracted by the recipient after decryption.
 
-`mac_hint` is **not** a MAC. It is a routing hint derived from the nonce:
-an intermediate node can use it to match messages to channels without
-decrypting anything. Authentication is fully handled by Poly1305 inside the
-ciphertext.
+The Poly1305 authentication tag is embedded inside `ciphertext` by NaCl's `secretbox`. If a single bit is altered — in the signing key prefix, in the message, or in the tag itself — decryption fails before any plaintext is produced. There is no way to tamper silently.
+
+`mac_hint` is **not** a MAC. It is a routing hint derived from the nonce: an intermediate node uses it to filter messages without decrypting anything. Authentication is fully handled by Poly1305 inside the ciphertext.
 
 #### ④ Origin seal — `timestamp`
 
@@ -213,27 +214,31 @@ server. This enables:
 #### ⑤ Non-repudiation — `signature`
 
 ```
-canonical = JSON({ all fields except signature }, keys sorted alphabetically)
+canonical = JSON({ all outer fields except signature }, keys sorted alphabetically)
 hash      = sha256(canonical)
-signature = secp256k1.sign(hash, sender_eth_privkey)
+signature = secp256k1.sign(hash, sender_signingKey)
 ```
 
-Proves that the holder of the Ethereum identity corresponding to `sender_pk`
-built this exact envelope with this exact content and this exact timestamp.
-Any modification to any field invalidates the signature.
+`sender_signingKey` is not the Ethereum private key — it is a key derived deterministically from the SIWE seed:
+
+```
+seed        = sha256(siwe_signature)
+signingKey  = HKDF(seed, "whispery/signing/v1")   // 32 bytes
+```
+
+Proves that the holder of the Whispery identity bound to `sender_pk` built this exact envelope with this exact content and timestamp. Any modification to any outer field invalidates the signature.
 
 **Verification — in-band (`openGroupEnvelope`):**
 
-The secp256k1 signing public key travels inside the ciphertext as a 33-byte prefix, invisible to the transport layer. After decryption, `openGroupEnvelope` extracts it and verifies immediately:
-
 ```
-plain         = secretbox.open(ciphertext, nonce, content_key)
-signingPubKey = plain[0:33]                            // in-band, no external registry needed
+plain         = secretbox.open(ciphertext, nonce, content_key)   // Poly1305 first
+signingPubKey = plain[0:33]                                       // extracted from layer ③
 message       = plain[33:]
-valid         = secp256k1.verify(signature, sha256(canonical), signingPubKey)
+secp256k1.verify(signature, sha256(canonical), signingPubKey)
+  → false → throw "firma inválida", discard message
 ```
 
-If the signature is invalid or the payload is malformed, `"firma inválida"` is thrown and the message is discarded. Verification is always enforced — there is no opt-out.
+The signing public key never appears in the clear outside the ciphertext. Verification is always enforced — there is no opt-out. An attacker would need the sender's `ethPrivKey` to produce a valid `signingPubKey` + `signature` pair for any given message content.
 
 ---
 
