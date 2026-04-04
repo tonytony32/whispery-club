@@ -256,7 +256,7 @@ export default function Omnibar() {
     kind === 'nft-address' ? 'NFT contract detected →' :
     kind === 'ens-name'    ? 'ENS name detected →' :
     kind === 'eoa-address' ? 'Wallet address detected →' :
-                             'Paste an event URL, NFT contract, Agent Swarm…'
+                             'Paste an event URL, NFT contract, Agent Chatbox…'
 
   const btnLabel =
     kind === 'classifying' ? 'Analysing…' :
