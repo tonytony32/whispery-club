@@ -29,83 +29,60 @@ const mono: React.CSSProperties = {
   fontSize: 12,
 }
 
-// ── Status badge ──────────────────────────────────────────────────────────────
-
 function StatusBadge({ status, signing }: { status: NodeStatus; signing: boolean }) {
   const s = signing ? 'signing' : status
   const [color, label] =
-    s === 'connected'     ? [C.green,  '● connected']      :
-    s === 'signing'       ? [C.yellow, '◌ signing…']       :
-    s === 'connecting'    ? [C.yellow, '◌ connecting…']    :
-    s === 'disconnected'  ? [C.orange, '⚡ disconnected']   :
-    s === 'error'         ? [C.red,    '✗ error']          :
-                            [C.muted,  '○ idle']
+    s === 'connected'    ? [C.green,  '● connected']    :
+    s === 'signing'      ? [C.yellow, '◌ signing…']     :
+    s === 'connecting'   ? [C.yellow, '◌ connecting…']  :
+    s === 'disconnected' ? [C.orange, '⚡ disconnected'] :
+    s === 'error'        ? [C.red,    '✗ error']        :
+                           [C.muted,  '○ idle']
   return <span style={{ ...mono, fontSize: 11, color, fontWeight: 700 }}>{label}</span>
 }
 
-// ── Log panel ─────────────────────────────────────────────────────────────────
-
-function LogPanel({ logs, accentColor }: { logs: string[]; accentColor: string }) {
+function LogPanel({ logs, accent }: { logs: string[]; accent: string }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => { ref.current?.scrollTo(0, ref.current.scrollHeight) }, [logs])
 
   return (
-    <div
-      ref={ref}
-      style={{
-        background: C.logBg,
-        border: `1px solid ${C.logBorder}`,
-        borderRadius: 8,
-        padding: '10px 14px',
-        height: 160,
-        overflowY: 'auto',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 1,
-      }}
-    >
+    <div ref={ref} style={{
+      background: C.logBg, border: `1px solid ${C.logBorder}`,
+      borderRadius: 8, padding: '8px 12px',
+      height: 140, overflowY: 'auto',
+      display: 'flex', flexDirection: 'column', gap: 1,
+    }}>
       <div style={{ ...mono, fontSize: 10, fontWeight: 700, letterSpacing: 1.2,
-        textTransform: 'uppercase', color: accentColor + '50', marginBottom: 5 }}>
+        textTransform: 'uppercase', color: accent + '40', marginBottom: 4 }}>
         log
       </div>
-      {logs.length === 0 ? (
-        <span style={{ ...mono, fontSize: 11, color: '#2a3a2a' }}>— waiting —</span>
-      ) : (
-        logs.map((entry, i) => {
-          const color =
-            entry.includes('✓')                           ? '#3d7a4d' :
-            entry.includes('failed') || entry.includes('error') ||
-            entry.includes('Error')  || entry.includes('lost')  ? '#7a3a3a' :
-            entry.includes('peer:connect ')               ? '#3a5a7a' :
-            entry.includes('peer:disconnect')             ? '#5a4a2a' :
-                                                            '#2d4a3a'
-          return (
-            <div key={i} style={{
-              ...mono, fontSize: 11, color, lineHeight: 1.5,
-              whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-            }}>
-              {entry}
-            </div>
-          )
-        })
-      )}
+      {logs.length === 0
+        ? <span style={{ ...mono, fontSize: 11, color: '#222' }}>— waiting —</span>
+        : logs.map((e, i) => {
+            const c =
+              e.includes('✓')                                         ? '#3d7a4d' :
+              e.includes('failed') || e.includes('error') ||
+              e.includes('Error')  || e.includes('lost')              ? '#7a3a3a' :
+              e.includes('peer:connect ')                             ? '#3a5a7a' :
+              e.includes('peer:disconnect')                           ? '#5a4a2a' :
+                                                                        '#2d4a3a'
+            return (
+              <div key={i} style={{
+                ...mono, fontSize: 11, color: c, lineHeight: 1.5,
+                whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+              }}>{e}</div>
+            )
+          })
+      }
     </div>
   )
 }
 
-// ── Shared participant view ───────────────────────────────────────────────────
-
-function ParticipantView({
-  label,
-  accentColor,
-  isDemo,
-  pointer,
-  eeeEpoch,
-  result,
-  logs,
+function ParticipantPanel({
+  label, accent, isDemo, pointer, eeeEpoch, result, logs,
 }: {
   label: string
-  accentColor: string
+  accent: string
   isDemo: boolean
   pointer: string | undefined
   eeeEpoch: bigint
@@ -124,8 +101,7 @@ function ParticipantView({
 
   async function handleSend() {
     if (!draft.trim()) return
-    setSending(true)
-    setSendError(null)
+    setSending(true); setSendError(null)
     try { await send(draft.trim()); setDraft('') }
     catch (e) { setSendError(e instanceof Error ? e.message : String(e)) }
     finally { setSending(false) }
@@ -135,28 +111,22 @@ function ParticipantView({
   const canSend   = connected && !!draft.trim() && !sending
 
   const card: React.CSSProperties = {
-    background: C.raised,
-    border: `1px solid ${C.border}`,
-    borderRadius: 10,
-    padding: '16px 20px',
+    background: C.raised, border: `1px solid ${C.border}`, borderRadius: 10,
   }
 
   return (
-    <div style={{
-      maxWidth: 680, margin: '0 auto', padding: '24px 32px',
-      display: 'flex', flexDirection: 'column', gap: 14,
-    }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
 
       {/* Header */}
       <div style={{
-        ...card,
-        borderColor: status === 'connected'     ? accentColor + '60' :
-                     status === 'disconnected'  ? C.orange + '60'    : C.border,
+        ...card, padding: '12px 16px',
+        borderColor: status === 'connected'    ? accent + '55'      :
+                     status === 'disconnected' ? C.orange + '55'    : C.border,
       }}>
         <div style={{ display: 'flex', alignItems: 'center',
-          justifyContent: 'space-between', marginBottom: 6 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ ...mono, fontSize: 14, fontWeight: 700, color: accentColor }}>
+          justifyContent: 'space-between', marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ ...mono, fontSize: 13, fontWeight: 700, color: accent }}>
               {label}
             </span>
             {connected && myPubKey && (
@@ -168,87 +138,68 @@ function ParticipantView({
           <StatusBadge status={status} signing={signing} />
         </div>
 
-        {connected && (
-          <span style={{ ...mono, fontSize: 11, color: C.muted }}>
+        {connected &&
+          <div style={{ ...mono, fontSize: 10, color: C.muted }}>
             epoch {String(eeeEpoch)} · group channel
-          </span>
-        )}
-
-        {status === 'disconnected' && (
-          <span style={{ ...mono, fontSize: 11, color: C.orange }}>
-            All Waku peers dropped. Messages cannot be sent until reconnected.
-          </span>
-        )}
-
-        {!pointer && (
-          <span style={{ ...mono, fontSize: 11, color: C.yellow }}>
+          </div>
+        }
+        {status === 'disconnected' &&
+          <div style={{ ...mono, fontSize: 11, color: C.orange }}>
+            All Waku peers dropped — messages paused.
+          </div>
+        }
+        {!pointer &&
+          <div style={{ ...mono, fontSize: 11, color: C.yellow }}>
             EEE not published — go to Live tab first.
-          </span>
-        )}
-
-        {signing && (
-          <span style={{ ...mono, fontSize: 11, color: C.yellow }}>
+          </div>
+        }
+        {signing &&
+          <div style={{ ...mono, fontSize: 11, color: C.yellow }}>
             Check MetaMask — sign the SIWE message…
-          </span>
-        )}
-        {status === 'connecting' && !signing && (
-          <span style={{ ...mono, fontSize: 11, color: C.yellow }}>Joining Waku…</span>
-        )}
-        {status === 'error' && (
-          <span style={{ ...mono, fontSize: 11, color: C.red }}>
-            Connection failed — see log below.
-          </span>
-        )}
-        {signError && (
-          <span style={{ ...mono, fontSize: 11, color: C.red }}>{signError}</span>
-        )}
-
+          </div>
+        }
+        {status === 'connecting' && !signing &&
+          <div style={{ ...mono, fontSize: 11, color: C.yellow }}>Joining Waku…</div>
+        }
+        {status === 'error' &&
+          <div style={{ ...mono, fontSize: 11, color: C.red }}>
+            Failed — see log below.
+          </div>
+        }
+        {signError &&
+          <div style={{ ...mono, fontSize: 11, color: C.red, marginTop: 4 }}>{signError}</div>
+        }
         {!isDemo && !signing && status === 'idle' && pointer && (
-          <button
-            onClick={connect}
-            style={{
-              marginTop: 10, background: accentColor, color: '#fff',
-              border: 'none', borderRadius: 6, padding: '9px 20px',
-              ...mono, fontWeight: 700, cursor: 'pointer',
-            }}
-          >
+          <button onClick={connect} style={{
+            marginTop: 8, background: accent, color: '#fff',
+            border: 'none', borderRadius: 6, padding: '8px 18px',
+            ...mono, fontWeight: 700, cursor: 'pointer',
+          }}>
             Connect to Waku
           </button>
         )}
       </div>
 
       {/* Thread */}
-      <div
-        ref={threadRef}
-        style={{
-          ...card,
-          flex: 1,
-          height: 360,
-          overflowY: 'auto',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
-          padding: '14px 18px',
-        }}
-      >
-        {messages.length === 0 ? (
-          <span style={{ ...mono, color: C.dim, fontSize: 11, margin: 'auto' }}>
-            No messages yet
-          </span>
-        ) : (
-          messages.map((msg: ChatMessage, i: number) => (
+      <div ref={threadRef} style={{
+        ...card, flex: 1, height: 300, overflowY: 'auto',
+        display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 14px',
+      }}>
+        {messages.length === 0
+          ? <span style={{ ...mono, color: C.dim, fontSize: 11, margin: 'auto' }}>No messages yet</span>
+          : messages.map((msg: ChatMessage, i: number) => (
             <div key={i} style={{
               display: 'flex',
               justifyContent: msg.direction === 'out' ? 'flex-end' : 'flex-start',
             }}>
               <div style={{
-                background: msg.direction === 'out' ? accentColor : C.surface,
+                background: msg.direction === 'out' ? accent : C.surface,
                 color: C.text,
-                border: `1px solid ${msg.direction === 'out' ? accentColor : C.border}`,
-                borderRadius: 8, padding: '7px 12px',
-                maxWidth: '80%', wordBreak: 'break-word', ...mono,
+                border: `1px solid ${msg.direction === 'out' ? accent : C.border}`,
+                borderRadius: 8, padding: '6px 10px',
+                maxWidth: '85%', wordBreak: 'break-word', ...mono,
               }}>
-                <div style={{ fontSize: 10, marginBottom: 3,
+                <div style={{ fontSize: 10, marginBottom: 2,
                   color: msg.direction === 'out' ? 'rgba(255,255,255,0.5)' : C.muted }}>
                   {msg.direction === 'out' ? label.toLowerCase() : 'group'} · {new Date(msg.at).toLocaleTimeString()}
                 </div>
@@ -256,11 +207,11 @@ function ParticipantView({
               </div>
             </div>
           ))
-        )}
+        }
       </div>
 
       {/* Compose */}
-      <div style={{ ...card, padding: '12px 16px' }}>
+      <div style={{ ...card, padding: '10px 14px' }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <input
             value={draft}
@@ -270,40 +221,35 @@ function ParticipantView({
             disabled={!connected}
             style={{
               flex: 1, background: C.surface, border: `1px solid ${C.border}`,
-              borderRadius: 6, padding: '8px 12px', color: C.text,
+              borderRadius: 6, padding: '7px 11px', color: C.text,
               ...mono, outline: 'none', opacity: connected ? 1 : 0.35,
             }}
           />
-          <button
-            onClick={handleSend}
-            disabled={!canSend}
-            style={{
-              background: canSend ? accentColor : C.dim,
-              color: '#fff', border: 'none', borderRadius: 6,
-              padding: '8px 16px', ...mono, fontWeight: 700,
-              cursor: canSend ? 'pointer' : 'default',
-            }}
-          >
+          <button onClick={handleSend} disabled={!canSend} style={{
+            background: canSend ? accent : C.dim,
+            color: '#fff', border: 'none', borderRadius: 6,
+            padding: '7px 14px', ...mono, fontWeight: 700,
+            cursor: canSend ? 'pointer' : 'default',
+          }}>
             {sending ? '…' : 'Send'}
           </button>
         </div>
         {sendError && (
-          <span style={{ ...mono, color: C.red, fontSize: 11, marginTop: 6, display: 'block' }}>
-            {sendError}
-          </span>
+          <div style={{ ...mono, color: C.red, fontSize: 11, marginTop: 5 }}>{sendError}</div>
         )}
       </div>
 
       {/* Log */}
-      <LogPanel logs={logs} accentColor={accentColor} />
+      <LogPanel logs={logs} accent={accent} />
     </div>
   )
 }
 
-// ── Alice (MetaMask) ──────────────────────────────────────────────────────────
+// ── Main split view ───────────────────────────────────────────────────────────
 
-export function AliceView() {
+export default function MessengerView() {
   const { address } = useAccount()
+
   const { data: eeeData } = useReadContract({
     address: BACK_ADDRESS, abi: BACK_ABI, functionName: 'getEEE',
     args: [CHANNEL_ID as `0x${string}`], query: { enabled: true },
@@ -311,10 +257,13 @@ export function AliceView() {
   const [eeePointer, eeeEpoch] = eeeData ?? ['', 0n]
   const pointer = eeePointer || undefined
 
-  const [logs, setLogs] = useState<string[]>([])
-  const addLog = useCallback((msg: string) => setLogs(p => [...p, msg]), [])
+  const [aliceLogs, setAliceLogs] = useState<string[]>([])
+  const [bettyLogs, setBettyLogs] = useState<string[]>([])
+  const addAliceLog = useCallback((msg: string) => setAliceLogs(p => [...p, msg]), [])
+  const addBettyLog = useCallback((msg: string) => setBettyLogs(p => [...p, msg]), [])
 
-  const result = useMessenger(address, pointer, 'Alice', addLog)
+  const aliceResult = useMessenger(address, pointer, 'Alice', addAliceLog)
+  const bettyResult = useDemoMessenger(DEMO_PRIVATE_KEYS.B, 'Betty', pointer, addBettyLog)
 
   if (!address) {
     return (
@@ -325,34 +274,25 @@ export function AliceView() {
   }
 
   return (
-    <ParticipantView
-      label="Alice" accentColor={C.accent}
-      isDemo={false} pointer={pointer} eeeEpoch={eeeEpoch}
-      result={result} logs={logs}
-    />
-  )
-}
-
-// ── Betty (demo key, auto-connect) ────────────────────────────────────────────
-
-export function BettyView() {
-  const { data: eeeData } = useReadContract({
-    address: BACK_ADDRESS, abi: BACK_ABI, functionName: 'getEEE',
-    args: [CHANNEL_ID as `0x${string}`], query: { enabled: true },
-  })
-  const [eeePointer, eeeEpoch] = eeeData ?? ['', 0n]
-  const pointer = eeePointer || undefined
-
-  const [logs, setLogs] = useState<string[]>([])
-  const addLog = useCallback((msg: string) => setLogs(p => [...p, msg]), [])
-
-  const result = useDemoMessenger(DEMO_PRIVATE_KEYS.B, 'Betty', pointer, addLog)
-
-  return (
-    <ParticipantView
-      label="Betty" accentColor={C.orange}
-      isDemo={true} pointer={pointer} eeeEpoch={eeeEpoch}
-      result={result} logs={logs}
-    />
+    <div style={{
+      padding: '20px 24px',
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: 20,
+      height: 'calc(100vh - 57px)',
+      boxSizing: 'border-box',
+      overflow: 'hidden',
+    }}>
+      <ParticipantPanel
+        label="Alice" accent={C.accent} isDemo={false}
+        pointer={pointer} eeeEpoch={eeeEpoch}
+        result={aliceResult} logs={aliceLogs}
+      />
+      <ParticipantPanel
+        label="Betty" accent={C.orange} isDemo={true}
+        pointer={pointer} eeeEpoch={eeeEpoch}
+        result={bettyResult} logs={bettyLogs}
+      />
+    </div>
   )
 }
