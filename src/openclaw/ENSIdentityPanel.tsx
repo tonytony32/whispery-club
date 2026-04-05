@@ -66,7 +66,15 @@ export default function ENSIdentityPanel() {
                 tokenId #{agent.tokenId}
               </span>
               {!agent.isHuman && (
-                <ENSIP25Badge ensName={agent.ensName} tokenId={agent.tokenId} />
+                <ENSIP25Badge
+                  ensName={agent.ensName}
+                  tokenId={agent.tokenId}
+                  tooltip={
+                    agent.erc8004AgentId && agent.erc8004CID
+                      ? `${agent.ensName} · agentId #${agent.erc8004AgentId} · ipfs://${agent.erc8004CID}`
+                      : undefined
+                  }
+                />
               )}
             </div>
             <span style={{ ...mono, fontSize: 9, color: '#475569' }}>

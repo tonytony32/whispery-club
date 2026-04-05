@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { verifyENSIP25, type VerificationStatus } from './ensip25'
 
 interface Props {
-  ensName: string
-  tokenId: number   // used as agentId proxy in demo
+  ensName:  string
+  tokenId:  number    // used as agentId proxy in demo
+  tooltip?: string    // overrides the default title attribute when verified
 }
 
 const mono: React.CSSProperties = {
@@ -12,7 +13,7 @@ const mono: React.CSSProperties = {
   fontWeight: 700,
 }
 
-export function ENSIP25Badge({ ensName, tokenId }: Props) {
+export function ENSIP25Badge({ ensName, tokenId, tooltip }: Props) {
   const [status, setStatus]   = useState<VerificationStatus>('pending')
   const [textKey, setTextKey] = useState<string>('')
 
@@ -34,7 +35,7 @@ export function ENSIP25Badge({ ensName, tokenId }: Props) {
   if (status === 'verified') {
     return (
       <span
-        title={textKey}
+        title={tooltip ?? textKey}
         style={{
           ...mono,
           display: 'inline-flex', alignItems: 'center', gap: 3,

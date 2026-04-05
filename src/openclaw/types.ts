@@ -23,15 +23,17 @@ export interface AgentMessage {
 }
 
 export interface AgentInfo {
-  id:         AgentId
-  label:      string
-  ensName:    string
-  wallet:     string
-  tokenId:    number
-  isHuman:    boolean
-  status:     AgentStatus
-  tokenCount: number
-  maxTokens:  number
+  id:              AgentId
+  label:           string
+  ensName:         string
+  wallet:          string
+  tokenId:         number
+  isHuman:         boolean
+  status:          AgentStatus
+  tokenCount:      number
+  maxTokens:       number
+  erc8004AgentId?: string
+  erc8004CID?:     string
 }
 
 export interface MemoryVars {
@@ -67,12 +69,16 @@ export const AGENT_IDENTITIES: Record<AgentId, Omit<AgentInfo, 'status' | 'token
     ensName: 'betty.whispery.eth',
     wallet:  '0xBF0c2136430053e6839113Abac2E55DBeB0E80a7',
     tokenId: 2, isHuman: false,
+    erc8004AgentId: '31815',
+    erc8004CID:     'QmTppopyJEZLMVpQCKm6w3yR6vvFBXAb2T7XEKd5CptekH',
   },
   caroline: {
     id: 'caroline', label: 'Caroline',
     ensName: 'caroline.whispery.eth',
     wallet:  '0x055476B69029367CF0E26eC784FB456Ed8ebcA00',
     tokenId: 3, isHuman: false,
+    erc8004AgentId: '31816',
+    erc8004CID:     'QmVgPxqTtYYb6UAmQvBygp29P7bTo6rrz2241gyFs3kgyW',
   },
   system: {
     id: 'system', label: 'System',

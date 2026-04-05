@@ -72,6 +72,6 @@ export async function verifyENSIP25(
 
 export const AGENT_VERIFIERS = {
   alice:    () => verifyENSIP25('alice.whispery.eth',    '1'),
-  betty:    () => verifyENSIP25('betty.whispery.eth',    '2'),
-  caroline: () => verifyENSIP25('caroline.whispery.eth', '3'),
+  betty:    () => verifyENSIP25('betty.whispery.eth',    '31815'),
+  caroline: () => verifyENSIP25('caroline.whispery.eth', '31816'),
 } as const
