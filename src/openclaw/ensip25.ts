@@ -35,6 +35,7 @@ export async function verifyENSIP25(
 
   try {
     const { ethers } = await import('ethers')
+    const MAINNET = ethers.Network.from(1)
     const rpcUrls = [
       import.meta.env.VITE_ENS_RPC_URL,
       'https://rpc.ankr.com/eth',
@@ -46,9 +47,11 @@ export async function verifyENSIP25(
 
     for (const url of rpcUrls) {
       try {
-        const provider = new ethers.JsonRpcProvider(url)
+        const provider = new ethers.JsonRpcProvider(
+          url, MAINNET, { staticNetwork: MAINNET },
+        )
         const resolver = await provider.getResolver(ensName)
-        if (!resolver) break
+        if (!resolver) continue
         rawValue = await resolver.getText(textKey)
         break
       } catch {
